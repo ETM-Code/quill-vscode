@@ -2,7 +2,7 @@
   "name": "quill-vscode",
   "displayName": "Quill Markdown Editor",
   "description": "Notion-style WYSIWYG markdown editor for VSCode. Open any .md file as a real document: headings, tables, task lists, LaTeX math, and syntax-highlighted code blocks.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "etm-code",
   "license": "MIT",
   "icon": "media/icon.png",
