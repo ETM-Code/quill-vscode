@@ -5,14 +5,45 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(QuillEditorProvider.register(context, provider))
 
   // "Open with Quill" command: reopens the active markdown file in our editor.
+  // The active resource may be a markdown TEXT editor (activeTextEditor) or our
+  // own custom editor (activeTab.input). Prefer whichever is present.
   context.subscriptions.push(
     vscode.commands.registerCommand('quill.openWithQuill', async () => {
-      const uri = vscode.window.activeTextEditor?.document.uri
+      const uri = activeResourceUri()
       if (!uri) {
         void vscode.window.showInformationMessage('Open a markdown file first.')
         return
       }
       await vscode.commands.executeCommand('vscode.openWith', uri, QuillEditorProvider.viewType)
+    }),
+  )
+
+  // "Open as Text" command: reopens the active resource in the built-in text
+  // editor. Shown in the editor title bar while a Quill document is focused.
+  context.subscriptions.push(
+    vscode.commands.registerCommand('quill.openWithTextEditor', async () => {
+      const uri = activeResourceUri()
+      if (!uri) {
+        void vscode.window.showInformationMessage('Open a markdown file first.')
+        return
+      }
+      await vscode.commands.executeCommand('vscode.openWith', uri, 'default')
+    }),
+  )
+
+  // Sticky default: when a markdown TEXT editor becomes active and the setting
+  // is on, flip the default for *.md / *.markdown back to the text editor. When
+  // the Quill custom editor (a webview) is focused, activeTextEditor is
+  // undefined, so this never wrongly fires for Quill. Registered here (not only
+  // inside resolveCustomTextEditor) so it is live from activation: opening a
+  // .md as plain text correctly sets the default to text even before Quill is
+  // ever used. resolveCustomTextEditor handles the other direction.
+  context.subscriptions.push(
+    vscode.window.onDidChangeActiveTextEditor(editor => {
+      if (!editor) return
+      if (editor.document.languageId !== 'markdown') return
+      if (!rememberLastEditorChoice()) return
+      void setMarkdownAssociations('default')
     }),
   )
 
@@ -204,6 +235,14 @@ class QuillEditorProvider implements vscode.CustomTextEditorProvider {
   ): Promise<void> {
     const webview = webviewPanel.webview
 
+    // Sticky default: the user just opened a markdown file with Quill, so make
+    // Quill the default for *.md / *.markdown going forward (if the setting is
+    // on). The reverse (opening a .md as text) is handled by the
+    // onDidChangeActiveTextEditor listener in activate().
+    if (rememberLastEditorChoice()) {
+      void setMarkdownAssociations(QuillEditorProvider.viewType)
+    }
+
     // For a saved file, the document lives in a folder; local relative images
     // (e.g. assets/x.png) resolve against it. We root that folder (and its
     // assets/ subdir) so the webview can load images from it under the CSP, and
@@ -349,6 +388,58 @@ class QuillEditorProvider implements vscode.CustomTextEditorProvider {
   </body>
 </html>`
   }
+}
+
+// --- sticky default-editor helpers ---
+
+/** Whether the "remember my last editor choice" sticky default is enabled. */
+function rememberLastEditorChoice(): boolean {
+  return vscode.workspace.getConfiguration('quill').get<boolean>('rememberLastEditorChoice', true)
+}
+
+/**
+ * The URI of the active resource, whether it is open as a markdown text editor
+ * (activeTextEditor) or as our custom editor (the active tab's input). When the
+ * Quill webview is focused, activeTextEditor is undefined, so we fall back to
+ * the active tab, whose input is a TabInputCustom carrying the uri.
+ */
+function activeResourceUri(): vscode.Uri | undefined {
+  const fromText = vscode.window.activeTextEditor?.document.uri
+  if (fromText) return fromText
+  const input = vscode.window.tabGroups.activeTabGroup.activeTab?.input as
+    | { uri?: vscode.Uri }
+    | undefined
+  return input?.uri
+}
+
+// Patterns we manage in workbench.editorAssociations. We only ever touch these
+// two keys; any other associations the user has set are preserved untouched.
+const MD_PATTERNS = ['*.md', '*.markdown'] as const
+
+/**
+ * Point the *.md / *.markdown editor associations at `target` (either the Quill
+ * viewType or "default" for the built-in text editor), merging into whatever
+ * the user already has and writing at the Global target. Only writes when the
+ * value actually changes, to avoid settings churn and write loops.
+ */
+async function setMarkdownAssociations(target: string): Promise<void> {
+  const config = vscode.workspace.getConfiguration()
+  const current =
+    config.get<Record<string, string>>('workbench.editorAssociations') ?? {}
+
+  // Already correct? Do nothing (this is what prevents a write loop: the
+  // onDidChangeActiveTextEditor / resolve handlers can fire repeatedly).
+  const alreadyCorrect = MD_PATTERNS.every(p => current[p] === target)
+  if (alreadyCorrect) return
+
+  const next: Record<string, string> = { ...current }
+  for (const p of MD_PATTERNS) next[p] = target
+
+  await config.update(
+    'workbench.editorAssociations',
+    next,
+    vscode.ConfigurationTarget.Global,
+  )
 }
 
 // FNV-1a over the bytes, matching the app's hashBytes so the same image

@@ -259,3 +259,150 @@ suite('Quill custom editor', () => {
     assert.ok(!result!.hasTable, 'old table should be gone after external replace')
   })
 })
+
+suite('Quill commands and sticky default editor', () => {
+  function associations(): Record<string, string> {
+    return (
+      vscode.workspace
+        .getConfiguration()
+        .get<Record<string, string>>('workbench.editorAssociations') ?? {}
+    )
+  }
+
+  suiteSetup(async () => {
+    const ext = vscode.extensions.getExtension('etm-code.quill-vscode')
+    assert.ok(ext, 'extension should be discoverable')
+    await ext!.activate()
+  })
+
+  test('both switch commands are registered', async () => {
+    const commands = await vscode.commands.getCommands(true)
+    assert.ok(
+      commands.includes('quill.openWithQuill'),
+      'quill.openWithQuill should be registered',
+    )
+    assert.ok(
+      commands.includes('quill.openWithTextEditor'),
+      'quill.openWithTextEditor should be registered',
+    )
+  })
+
+  test('opening a .md with Quill makes Quill the default for *.md / *.markdown', async function () {
+    this.timeout(30000)
+    // The setting defaults to true; the first suite already opened a file with
+    // Quill, but make this self-contained with its own file.
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'quill-assoc-'))
+    const filePath = path.join(tmpDir, 'doc.md')
+    fs.writeFileSync(filePath, '# Sticky default\n', 'utf8')
+    const uri = vscode.Uri.file(filePath)
+
+    try {
+      // Start from a known state: clear our two keys.
+      await vscode.workspace
+        .getConfiguration()
+        .update(
+          'workbench.editorAssociations',
+          {},
+          vscode.ConfigurationTarget.Global,
+        )
+
+      // Resolving the Quill custom editor should sync the associations to Quill.
+      await vscode.commands.executeCommand('vscode.openWith', uri, VIEW_TYPE)
+
+      let assoc = associations()
+      for (let i = 0; i < 20 && assoc['*.md'] !== VIEW_TYPE; i++) {
+        await sleep(200)
+        assoc = associations()
+      }
+      assert.strictEqual(
+        assoc['*.md'],
+        VIEW_TYPE,
+        '*.md should be associated with Quill after opening with Quill',
+      )
+      assert.strictEqual(
+        assoc['*.markdown'],
+        VIEW_TYPE,
+        '*.markdown should be associated with Quill after opening with Quill',
+      )
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true })
+    }
+  })
+
+  test('opening a .md as a text editor flips the default back to text', async function () {
+    this.timeout(30000)
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'quill-assoc-'))
+    const filePath = path.join(tmpDir, 'doc2.md')
+    fs.writeFileSync(filePath, '# Back to text\n', 'utf8')
+    const uri = vscode.Uri.file(filePath)
+
+    try {
+      // Pre-seed Quill as the default so we can observe the flip to "default".
+      await vscode.workspace
+        .getConfiguration()
+        .update(
+          'workbench.editorAssociations',
+          { '*.md': VIEW_TYPE, '*.markdown': VIEW_TYPE },
+          vscode.ConfigurationTarget.Global,
+        )
+
+      // Open as a plain text editor; this makes a markdown TEXT editor active,
+      // which the onDidChangeActiveTextEditor listener turns into "default".
+      const doc = await vscode.workspace.openTextDocument(uri)
+      await vscode.window.showTextDocument(doc)
+
+      let assoc = associations()
+      for (let i = 0; i < 20 && assoc['*.md'] !== 'default'; i++) {
+        await sleep(200)
+        assoc = associations()
+      }
+      assert.strictEqual(
+        assoc['*.md'],
+        'default',
+        '*.md should flip back to the built-in editor after opening as text',
+      )
+      assert.strictEqual(
+        assoc['*.markdown'],
+        'default',
+        '*.markdown should flip back to the built-in editor after opening as text',
+      )
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true })
+    }
+  })
+
+  test('unrelated editor associations are preserved', async function () {
+    this.timeout(30000)
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'quill-assoc-'))
+    const filePath = path.join(tmpDir, 'doc3.md')
+    fs.writeFileSync(filePath, '# Preserve others\n', 'utf8')
+    const uri = vscode.Uri.file(filePath)
+
+    try {
+      // A key Quill must never touch.
+      await vscode.workspace
+        .getConfiguration()
+        .update(
+          'workbench.editorAssociations',
+          { '*.svg': 'default', '*.md': 'default', '*.markdown': 'default' },
+          vscode.ConfigurationTarget.Global,
+        )
+
+      await vscode.commands.executeCommand('vscode.openWith', uri, VIEW_TYPE)
+
+      let assoc = associations()
+      for (let i = 0; i < 20 && assoc['*.md'] !== VIEW_TYPE; i++) {
+        await sleep(200)
+        assoc = associations()
+      }
+      assert.strictEqual(assoc['*.md'], VIEW_TYPE, 'Quill key updated')
+      assert.strictEqual(
+        assoc['*.svg'],
+        'default',
+        'the unrelated *.svg association must be preserved',
+      )
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true })
+    }
+  })
+})

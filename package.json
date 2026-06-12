@@ -38,7 +38,10 @@
     "theme": "dark"
   },
   "main": "./out/extension.js",
-  "activationEvents": [],
+  "activationEvents": [
+    "onLanguage:markdown",
+    "onStartupFinished"
+  ],
   "contributes": {
     "customEditors": [
       {
@@ -51,13 +54,44 @@
         "priority": "option"
       }
     ],
+    "configuration": {
+      "title": "Quill",
+      "properties": {
+        "quill.rememberLastEditorChoice": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Make whichever editor you last used for a Markdown file the default for opening `.md` and `.markdown` files. Opening a file with Quill makes Quill the default; opening one in the normal text editor makes the text editor the default again. Quill does this by keeping the built-in `#workbench.editorAssociations#` setting in sync with your last choice (it only touches the `*.md` and `*.markdown` entries). Turn this off to leave your editor associations alone."
+        }
+      }
+    },
     "commands": [
       {
         "command": "quill.openWithQuill",
         "title": "Open with Quill (WYSIWYG)",
-        "category": "Quill"
+        "category": "Quill",
+        "icon": "$(book)"
+      },
+      {
+        "command": "quill.openWithTextEditor",
+        "title": "Open as Text (View Source)",
+        "category": "Quill",
+        "icon": "$(code)"
       }
-    ]
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "quill.openWithQuill",
+          "group": "navigation",
+          "when": "resourceExtname =~ /\\.(md|markdown)$/ && activeCustomEditorId != quill.markdownEditor && !notebookEditorFocused"
+        },
+        {
+          "command": "quill.openWithTextEditor",
+          "group": "navigation",
+          "when": "activeCustomEditorId == quill.markdownEditor"
+        }
+      ]
+    }
   },
   "scripts": {
     "build:ext": "esbuild src/extension.ts --bundle --platform=node --target=node18 --external:vscode --format=cjs --outfile=out/extension.js",
