@@ -1,0 +1,249 @@
+import * as vscode from 'vscode'
+
+export function activate(context: vscode.ExtensionContext): void {
+  const provider = new QuillEditorProvider(context)
+  context.subscriptions.push(QuillEditorProvider.register(context, provider))
+
+  // "Open with Quill" command: reopens the active markdown file in our editor.
+  context.subscriptions.push(
+    vscode.commands.registerCommand('quill.openWithQuill', async () => {
+      const uri = vscode.window.activeTextEditor?.document.uri
+      if (!uri) {
+        void vscode.window.showInformationMessage('Open a markdown file first.')
+        return
+      }
+      await vscode.commands.executeCommand('vscode.openWith', uri, QuillEditorProvider.viewType)
+    }),
+  )
+
+  // Test-only commands, gated behind QUILL_TEST so they never run in production.
+  // They drive a real, resolved webview over its actual message channel, which
+  // is how the integration test proves the markdown<->ProseMirror round-trip.
+  if (process.env.QUILL_TEST === '1') {
+    context.subscriptions.push(
+      vscode.commands.registerCommand('quill._test.probe', (uri: string) =>
+        provider.testProbe(uri),
+      ),
+      vscode.commands.registerCommand('quill._test.simulateEdit', (uri: string, text: string) =>
+        provider.testSimulateEdit(uri, text),
+      ),
+    )
+  }
+}
+
+export function deactivate(): void {
+  /* nothing to clean up */
+}
+
+type WebviewToHost =
+  | { type: 'ready' }
+  | { type: 'edit'; text: string }
+  | { type: 'openLink'; url: string }
+  | { type: 'probe-result'; id: number; result: ProbeResult }
+
+interface ProbeResult {
+  markdown: string
+  nodeTypes: string[]
+  hasKatex: boolean
+  hasTable: boolean
+  hasTaskList: boolean
+  hasCodeBlock: boolean
+}
+
+interface Session {
+  webview: vscode.Webview
+  document: vscode.TextDocument
+}
+
+class QuillEditorProvider implements vscode.CustomTextEditorProvider {
+  public static readonly viewType = 'quill.markdownEditor'
+
+  // Live sessions by document URI, used only by the test-only probe commands.
+  private readonly sessions = new Map<string, Session>()
+  private probeId = 0
+  private readonly pendingProbes = new Map<number, (r: ProbeResult) => void>()
+
+  public static register(
+    context: vscode.ExtensionContext,
+    provider: QuillEditorProvider,
+  ): vscode.Disposable {
+    return vscode.window.registerCustomEditorProvider(
+      QuillEditorProvider.viewType,
+      provider,
+      {
+        webviewOptions: {
+          // Keep the editor alive when its tab is in the background so undo
+          // history and scroll position survive tab switches.
+          retainContextWhenHidden: true,
+        },
+        supportsMultipleEditorsPerDocument: false,
+      },
+    )
+  }
+
+  constructor(private readonly context: vscode.ExtensionContext) {}
+
+  // --- test-only helpers (registered behind QUILL_TEST) ---
+
+  public testProbe(uri: string): Promise<ProbeResult> {
+    const session = this.sessions.get(uri)
+    if (!session) return Promise.reject(new Error(`no Quill session for ${uri}`))
+    const id = ++this.probeId
+    return new Promise<ProbeResult>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pendingProbes.delete(id)
+        reject(new Error('probe timed out'))
+      }, 5000)
+      this.pendingProbes.set(id, r => {
+        clearTimeout(timer)
+        resolve(r)
+      })
+      void session.webview.postMessage({ type: 'probe', id })
+    })
+  }
+
+  public async testSimulateEdit(uri: string, text: string): Promise<void> {
+    const session = this.sessions.get(uri)
+    if (!session) throw new Error(`no Quill session for ${uri}`)
+    await session.webview.postMessage({ type: 'simulateEdit', text })
+  }
+
+  public async resolveCustomTextEditor(
+    document: vscode.TextDocument,
+    webviewPanel: vscode.WebviewPanel,
+    _token: vscode.CancellationToken,
+  ): Promise<void> {
+    const webview = webviewPanel.webview
+    webview.options = {
+      enableScripts: true,
+      localResourceRoots: [vscode.Uri.joinPath(this.context.extensionUri, 'media')],
+    }
+    webview.html = this.getHtml(webview)
+
+    const uriKey = document.uri.toString()
+    this.sessions.set(uriKey, { webview, document })
+
+    // The text the webview last reported to us. Used to suppress the echo: when
+    // we apply the webview's edit to the document, onDidChangeTextDocument fires,
+    // and we must NOT bounce that identical text back (it would reset the caret).
+    let lastTextFromWebview: string | null = null
+    let ready = false
+
+    const pushDocumentToWebview = (reason: 'init' | 'update') => {
+      void webview.postMessage({ type: reason, text: document.getText() })
+    }
+
+    // Apply the webview's serialized markdown to the document as a single
+    // whole-document replacement. VSCode owns dirty state, undo, and save; we
+    // never hand-roll incremental ProseMirror<->TextDocument diffing.
+    const applyEditToDocument = async (text: string) => {
+      if (text === document.getText()) return
+      lastTextFromWebview = text
+      const edit = new vscode.WorkspaceEdit()
+      const fullRange = new vscode.Range(
+        document.positionAt(0),
+        document.positionAt(document.getText().length),
+      )
+      edit.replace(document.uri, fullRange, text)
+      await vscode.workspace.applyEdit(edit)
+    }
+
+    const changeSub = vscode.workspace.onDidChangeTextDocument(e => {
+      if (e.document.uri.toString() !== document.uri.toString()) return
+      if (!ready) return
+      const text = document.getText()
+      // Skip the echo of the webview's own edit.
+      if (text === lastTextFromWebview) return
+      // An external change (git checkout, find/replace in another view, format
+      // on save, undo/redo driven by VSCode). Reload the webview's document.
+      pushDocumentToWebview('update')
+    })
+
+    const messageSub = webview.onDidReceiveMessage(async (msg: WebviewToHost) => {
+      switch (msg.type) {
+        case 'ready':
+          ready = true
+          pushDocumentToWebview('init')
+          break
+        case 'edit':
+          await applyEditToDocument(msg.text)
+          break
+        case 'openLink':
+          if (msg.url) void vscode.env.openExternal(vscode.Uri.parse(msg.url))
+          break
+        case 'probe-result': {
+          const resolve = this.pendingProbes.get(msg.id)
+          if (resolve) {
+            this.pendingProbes.delete(msg.id)
+            resolve(msg.result)
+          }
+          break
+        }
+      }
+    })
+
+    webviewPanel.onDidDispose(() => {
+      this.sessions.delete(uriKey)
+      changeSub.dispose()
+      messageSub.dispose()
+    })
+  }
+
+  private getHtml(webview: vscode.Webview): string {
+    const scriptUri = webview.asWebviewUri(
+      vscode.Uri.joinPath(this.context.extensionUri, 'media', 'webview.js'),
+    )
+    // KaTeX CSS is linked (not inlined) so its relative url(fonts/...) refs
+    // resolve against media/ and the font files load under the CSP.
+    const katexCssUri = webview.asWebviewUri(
+      vscode.Uri.joinPath(this.context.extensionUri, 'media', 'katex.min.css'),
+    )
+    // The bundled editor + theme CSS that esbuild emits next to the JS.
+    const styleUri = webview.asWebviewUri(
+      vscode.Uri.joinPath(this.context.extensionUri, 'media', 'webview.css'),
+    )
+    const nonce = getNonce()
+    // Strict CSP: only our nonce'd script runs. Styles load as linked
+    // stylesheets (webview.css + katex.min.css) from media/. style-src still
+    // needs 'unsafe-inline' because ProseMirror and KaTeX set inline style=""
+    // attributes, which CSP Level 2 governs under style-src. KaTeX fonts load
+    // as same-origin webview resources via font-src. No remote anything, no eval.
+    const csp = [
+      `default-src 'none'`,
+      `img-src ${webview.cspSource} data:`,
+      `font-src ${webview.cspSource} data:`,
+      `style-src ${webview.cspSource} 'unsafe-inline'`,
+      `script-src 'nonce-${nonce}'`,
+    ].join('; ')
+
+    return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="${csp}" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="stylesheet" href="${katexCssUri}" />
+    <link rel="stylesheet" href="${styleUri}" />
+    <title>Quill</title>
+  </head>
+  <body>
+    <div id="app">
+      <main id="editor-container">
+        <div id="editor"></div>
+      </main>
+      <span id="word-count"></span>
+    </div>
+    <script nonce="${nonce}" src="${scriptUri}"></script>
+  </body>
+</html>`
+  }
+}
+
+function getNonce(): string {
+  let text = ''
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
+  for (let i = 0; i < 32; i++) {
+    text += chars.charAt(Math.floor(Math.random() * chars.length))
+  }
+  return text
+}
