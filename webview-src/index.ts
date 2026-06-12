@@ -11,6 +11,7 @@
 import type { Editor } from '@tiptap/core'
 import { TextSelection } from '@tiptap/pm/state'
 import { createQuillEditor, getMarkdown, setMarkdown } from './vendor/editor-setup'
+import { configureImages, insertImageBytes } from './vendor/images'
 import { BubbleMenu } from './vendor/ui/bubble-menu'
 import { LinkPopover } from './vendor/ui/link-popover'
 import { MathPopover } from './vendor/ui/math-popover'
@@ -40,16 +41,22 @@ declare function acquireVsCodeApi(): VsCodeApi
 const vscode = acquireVsCodeApi()
 
 type HostMessage =
-  | { type: 'init'; text: string }
-  | { type: 'update'; text: string }
+  | { type: 'init'; text: string; imageBase?: string | null }
+  | { type: 'update'; text: string; imageBase?: string | null }
+  // Image host replies (request/response correlated by id):
+  | { type: 'saveImageResult'; id: number; relPath?: string; error?: string }
+  | { type: 'insertImageData'; bytes: number[]; ext: string }
   // Test-only (sent only when the extension runs under QUILL_TEST):
   | { type: 'probe'; id: number }
   | { type: 'simulateEdit'; text: string }
+  | { type: 'simulatePasteImage'; bytes: number[]; ext: string }
 
 type WebviewMessage =
   | { type: 'ready' }
   | { type: 'edit'; text: string }
   | { type: 'openLink'; url: string }
+  | { type: 'saveImage'; id: number; bytes: number[]; ext: string }
+  | { type: 'pickImage' }
   | { type: 'probe-result'; id: number; result: ProbeResult }
 
 interface ProbeResult {
@@ -59,6 +66,8 @@ interface ProbeResult {
   hasTable: boolean
   hasTaskList: boolean
   hasCodeBlock: boolean
+  imgCount: number
+  imgSrcs: string[]
 }
 
 function post(msg: WebviewMessage): void {
@@ -85,6 +94,66 @@ const EDIT_DEBOUNCE_MS = 220
 
 let linkPopover: LinkPopover
 let mathPopover: MathPopover
+
+// ---------------------------------------------------------------------------
+// Image host wiring
+// ---------------------------------------------------------------------------
+//
+// The webview cannot call asWebviewUri, read files, or write files. So:
+//  - the host sends `imageBase`, the document folder's webview base URI, with
+//    every init/update. resolveLocal joins it with a relative src.
+//  - saving posts {saveImage, id, bytes, ext} and resolves on saveImageResult.
+//  - the slash-menu Image command posts {pickImage}; the host runs the open
+//    dialog, reads the file, and sends {insertImageData, bytes, ext} back.
+
+// Webview base URI for the document folder (e.g.
+// https://file%2B.vscode-resource.../path/to/docdir). Updated on every load.
+let imageBaseUri: string | null = null
+
+function joinUri(base: string, rel: string): string {
+  return `${base.replace(/\/+$/, '')}/${rel.replace(/^[/\\]+/, '')}`
+}
+
+// saveImage request/response correlation.
+let saveImageId = 0
+const pendingSaves = new Map<number, (relPath: string | null) => void>()
+
+configureImages({
+  // Map a LOCAL markdown src to a webview-loadable URL. External srcs
+  // (http/data/blob) never reach here; resolveForDisplay handles those.
+  resolveLocal: (src, _baseDir) => {
+    if (!imageBaseUri) return null
+    // Absolute paths can't be joined onto the doc-folder base URI; the host
+    // only roots the doc folder (+ assets) in localResourceRoots, so an
+    // absolute path outside that tree wouldn't load anyway. Best effort: build
+    // a vscode-resource URI from the absolute path via the base's authority.
+    if (src.startsWith('/') || /^[a-zA-Z]:[/\\]/.test(src)) {
+      try {
+        const u = new URL(imageBaseUri)
+        // base path is /<...>/<docdir>; swap it for the absolute file path.
+        u.pathname = src.replace(/\\/g, '/').replace(/^\/?/, '/')
+        return u.toString()
+      } catch {
+        return null
+      }
+    }
+    return joinUri(imageBaseUri, src)
+  },
+  // Persist bytes via the host and return the markdown src to store.
+  saver: (bytes, ext) =>
+    new Promise<string | null>(resolve => {
+      const id = ++saveImageId
+      const timer = setTimeout(() => {
+        pendingSaves.delete(id)
+        resolve(null)
+      }, 15000)
+      pendingSaves.set(id, relPath => {
+        clearTimeout(timer)
+        resolve(relPath)
+      })
+      post({ type: 'saveImage', id, bytes: Array.from(bytes), ext })
+    }),
+})
 
 const editor: Editor = createQuillEditor(editorEl, {
   onDocChanged: () => {
@@ -115,6 +184,9 @@ const slashMenu = new SlashMenu(editor, {
       if (node && dom) mathPopover.show(kind, node.attrs.latex, pos, elementAnchor(dom))
     })
   },
+  // The host runs showOpenDialog, reads the file, and sends the bytes back as
+  // an `insertImageData` message (handled in the host message channel below).
+  onInsertImage: () => post({ type: 'pickImage' }),
 })
 const findBar = new FindBar(editor)
 void bubbleMenu
@@ -147,7 +219,10 @@ function flushEditPush(): void {
 }
 
 // --- apply host content (host -> webview) ---
-function applyRemoteText(text: string): void {
+function applyRemoteText(text: string, imageBase?: string | null): void {
+  // Point the image layer at this document's folder before rendering so local
+  // images resolve. A null base means the doc is untitled (no folder URI).
+  if (imageBase !== undefined) imageBaseUri = imageBase ?? null
   // Skip echoes of our own change. The host re-broadcasts the document text on
   // every change (including ours); re-setting identical content would blow away
   // the selection for no reason.
@@ -193,7 +268,20 @@ window.addEventListener('message', (e: MessageEvent<HostMessage>) => {
   switch (msg.type) {
     case 'init':
     case 'update':
-      applyRemoteText(msg.text)
+      applyRemoteText(msg.text, msg.imageBase)
+      break
+    case 'saveImageResult': {
+      const resolve = pendingSaves.get(msg.id)
+      if (resolve) {
+        pendingSaves.delete(msg.id)
+        resolve(msg.relPath ?? null)
+      }
+      break
+    }
+    case 'insertImageData':
+      // The host picked + read an image file; save it through the same path
+      // and insert at the caret.
+      void insertImageBytes(editor, Uint8Array.from(msg.bytes), msg.ext)
       break
     case 'probe':
       post({ type: 'probe-result', id: msg.id, result: probe() })
@@ -203,6 +291,16 @@ window.addEventListener('message', (e: MessageEvent<HostMessage>) => {
       // transactions flow webview -> host exactly like a user's typing would.
       setMarkdown(editor, msg.text)
       flushEditPush()
+      break
+    case 'simulatePasteImage':
+      // Drive the exact paste/drop code path: insertImageBytes runs the
+      // configured saver (which posts saveImage to the host, writes the file,
+      // and returns assets/img-<hash>), then inserts the image node + pushes
+      // the new markdown back to the host like a real paste would.
+      void (async () => {
+        await insertImageBytes(editor, Uint8Array.from(msg.bytes), msg.ext)
+        flushEditPush()
+      })()
       break
   }
 })
@@ -215,6 +313,9 @@ function probe(): ProbeResult {
     return true
   })
   const dom = editor.view.dom
+  // Rendered <img> elements (the node view swaps in a loadable URL via
+  // resolveForDisplay, so src here is the resolved URL, not the markdown src).
+  const imgs = Array.from(dom.querySelectorAll('img.quill-image')) as HTMLImageElement[]
   return {
     markdown: getMarkdown(editor),
     nodeTypes: [...nodeTypes],
@@ -223,6 +324,8 @@ function probe(): ProbeResult {
     hasTable: !!dom.querySelector('table'),
     hasTaskList: !!dom.querySelector('ul[data-type="taskList"]'),
     hasCodeBlock: !!dom.querySelector('.code-block, pre code'),
+    imgCount: imgs.length,
+    imgSrcs: imgs.map(i => i.getAttribute('src') ?? ''),
   }
 }
 

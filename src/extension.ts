@@ -27,6 +27,11 @@ export function activate(context: vscode.ExtensionContext): void {
       vscode.commands.registerCommand('quill._test.simulateEdit', (uri: string, text: string) =>
         provider.testSimulateEdit(uri, text),
       ),
+      vscode.commands.registerCommand(
+        'quill._test.simulatePasteImage',
+        (uri: string, bytes: number[], ext: string) =>
+          provider.testSimulatePasteImage(uri, bytes, ext),
+      ),
     )
   }
 }
@@ -39,6 +44,8 @@ type WebviewToHost =
   | { type: 'ready' }
   | { type: 'edit'; text: string }
   | { type: 'openLink'; url: string }
+  | { type: 'saveImage'; id: number; bytes: number[]; ext: string }
+  | { type: 'pickImage' }
   | { type: 'probe-result'; id: number; result: ProbeResult }
 
 interface ProbeResult {
@@ -48,6 +55,8 @@ interface ProbeResult {
   hasTable: boolean
   hasTaskList: boolean
   hasCodeBlock: boolean
+  imgCount: number
+  imgSrcs: string[]
 }
 
 interface Session {
@@ -108,15 +117,110 @@ class QuillEditorProvider implements vscode.CustomTextEditorProvider {
     await session.webview.postMessage({ type: 'simulateEdit', text })
   }
 
+  public async testSimulatePasteImage(uri: string, bytes: number[], ext: string): Promise<void> {
+    const session = this.sessions.get(uri)
+    if (!session) throw new Error(`no Quill session for ${uri}`)
+    await session.webview.postMessage({ type: 'simulatePasteImage', bytes, ext })
+  }
+
+  // --- image host ---
+
+  /**
+   * The folder the document lives in, or null for an untitled/unsaved doc.
+   * Relative image srcs resolve against this, and pasted images write into its
+   * `assets/` subdir.
+   */
+  private docDir(document: vscode.TextDocument): vscode.Uri | null {
+    if (document.uri.scheme === 'untitled') return null
+    if (document.isUntitled) return null
+    return vscode.Uri.joinPath(document.uri, '..')
+  }
+
+  /**
+   * Write pasted/dropped image bytes into `<docDir>/assets/img-<hash>.<ext>`
+   * and reply with the relative path to store in the markdown. Uses an FNV-1a
+   * content hash (mirroring the app's hashBytes) so re-pasting the same image
+   * reuses the file. Replies with an error / null relPath on any failure.
+   */
+  private async handleSaveImage(
+    webview: vscode.Webview,
+    document: vscode.TextDocument,
+    id: number,
+    bytes: number[],
+    ext: string,
+  ): Promise<void> {
+    const docDir = this.docDir(document)
+    if (!docDir) {
+      void vscode.window.showInformationMessage('Save the document first to add images')
+      void webview.postMessage({ type: 'saveImageResult', id })
+      return
+    }
+    try {
+      const data = Uint8Array.from(bytes)
+      const safeExt = (ext || 'png').replace(/[^a-z0-9]/gi, '').toLowerCase() || 'png'
+      const name = `img-${fnv1a(data)}.${safeExt}`
+      const assetsDir = vscode.Uri.joinPath(docDir, 'assets')
+      await vscode.workspace.fs.createDirectory(assetsDir)
+      await vscode.workspace.fs.writeFile(vscode.Uri.joinPath(assetsDir, name), data)
+      void webview.postMessage({ type: 'saveImageResult', id, relPath: `assets/${name}` })
+    } catch (e) {
+      void webview.postMessage({ type: 'saveImageResult', id, error: String(e) })
+    }
+  }
+
+  /**
+   * Slash-menu "Image": run the open dialog, read the chosen file, and hand the
+   * bytes back to the webview, which saves them through the same path as paste
+   * and inserts the node.
+   */
+  private async handlePickImage(
+    webview: vscode.Webview,
+    document: vscode.TextDocument,
+  ): Promise<void> {
+    if (!this.docDir(document)) {
+      void vscode.window.showInformationMessage('Save the document first to add images')
+      return
+    }
+    const picked = await vscode.window.showOpenDialog({
+      canSelectMany: false,
+      openLabel: 'Insert Image',
+      filters: { Images: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'avif'] },
+    })
+    if (!picked || picked.length === 0) return
+    try {
+      const data = await vscode.workspace.fs.readFile(picked[0])
+      const fsPath = picked[0].fsPath
+      const ext = fsPath.slice(fsPath.lastIndexOf('.') + 1).toLowerCase() || 'png'
+      void webview.postMessage({ type: 'insertImageData', bytes: Array.from(data), ext })
+    } catch (e) {
+      void vscode.window.showErrorMessage(`Couldn't insert image: ${e}`)
+    }
+  }
+
   public async resolveCustomTextEditor(
     document: vscode.TextDocument,
     webviewPanel: vscode.WebviewPanel,
     _token: vscode.CancellationToken,
   ): Promise<void> {
     const webview = webviewPanel.webview
+
+    // For a saved file, the document lives in a folder; local relative images
+    // (e.g. assets/x.png) resolve against it. We root that folder (and its
+    // assets/ subdir) so the webview can load images from it under the CSP, and
+    // hand the webview the folder's base URI so it can build image src URLs.
+    const docDir = this.docDir(document)
+    const localRoots: vscode.Uri[] = [
+      vscode.Uri.joinPath(this.context.extensionUri, 'media'),
+    ]
+    let imageBase: string | null = null
+    if (docDir) {
+      localRoots.push(docDir, vscode.Uri.joinPath(docDir, 'assets'))
+      imageBase = webview.asWebviewUri(docDir).toString()
+    }
+
     webview.options = {
       enableScripts: true,
-      localResourceRoots: [vscode.Uri.joinPath(this.context.extensionUri, 'media')],
+      localResourceRoots: localRoots,
     }
     webview.html = this.getHtml(webview)
 
@@ -130,7 +234,7 @@ class QuillEditorProvider implements vscode.CustomTextEditorProvider {
     let ready = false
 
     const pushDocumentToWebview = (reason: 'init' | 'update') => {
-      void webview.postMessage({ type: reason, text: document.getText() })
+      void webview.postMessage({ type: reason, text: document.getText(), imageBase })
     }
 
     // Apply the webview's serialized markdown to the document as a single
@@ -171,6 +275,12 @@ class QuillEditorProvider implements vscode.CustomTextEditorProvider {
         case 'openLink':
           if (msg.url) void vscode.env.openExternal(vscode.Uri.parse(msg.url))
           break
+        case 'saveImage':
+          await this.handleSaveImage(webview, document, msg.id, msg.bytes, msg.ext)
+          break
+        case 'pickImage':
+          await this.handlePickImage(webview, document)
+          break
         case 'probe-result': {
           const resolve = this.pendingProbes.get(msg.id)
           if (resolve) {
@@ -210,7 +320,9 @@ class QuillEditorProvider implements vscode.CustomTextEditorProvider {
     // as same-origin webview resources via font-src. No remote anything, no eval.
     const csp = [
       `default-src 'none'`,
-      `img-src ${webview.cspSource} data:`,
+      // Local images load as same-origin webview resources (cspSource); remote
+      // image URLs (https) and inline data: URIs render too.
+      `img-src ${webview.cspSource} https: data:`,
       `font-src ${webview.cspSource} data:`,
       `style-src ${webview.cspSource} 'unsafe-inline'`,
       `script-src 'nonce-${nonce}'`,
@@ -237,6 +349,17 @@ class QuillEditorProvider implements vscode.CustomTextEditorProvider {
   </body>
 </html>`
   }
+}
+
+// FNV-1a over the bytes, matching the app's hashBytes so the same image
+// content always maps to the same assets/img-<hash> filename (re-paste dedupes).
+function fnv1a(bytes: Uint8Array): string {
+  let h = 0x811c9dc5
+  for (let i = 0; i < bytes.length; i++) {
+    h ^= bytes[i]
+    h = Math.imul(h, 0x01000193)
+  }
+  return (h >>> 0).toString(16).padStart(8, '0')
 }
 
 function getNonce(): string {
