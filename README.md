@@ -14,6 +14,7 @@ Your AI agents write markdown all day, and most of it lands here in VS Code: arc
 - **GFM tables.** Render and edit inline instead of counting pipes.
 - **Task lists.** `- [ ]` checkboxes, clickable, round-trip faithfully.
 - **LaTeX math (KaTeX).** Inline `$E=mc^2$` and block `$$...$$`. Click any equation to edit it in a popover.
+- **Mermaid diagrams.** ` ```mermaid ` fences render as diagrams; click one to edit the source with a live preview. The diagram code round-trips as a normal mermaid fence.
 - **Images.** Local relative images render inline. Paste or drop an image into a saved document and it is written next to the file under `assets/` and linked as `![](assets/img-<hash>.png)`. The slash menu's Image command opens a file picker.
 - **Syntax-highlighted code.** Code blocks with a language picker and one-click copy. Grammars load lazily per language, so they cost nothing until used.
 - **Slash menu.** Type `/` on an empty line to insert any block: headings, lists, tables, math, dividers, code.
