@@ -16,6 +16,9 @@ document changes outside the editor.
 - WYSIWYG markdown editing: headings, bold/italic/underline/strike, lists, blockquotes,
   inline code, links.
 - GFM tables, task lists (`- [ ]`), horizontal rules.
+- Images: local relative images (e.g. `assets/pic.png`) render inline; paste or drop an
+  image into a saved document and it is written next to the file under `assets/` and linked
+  as `![](assets/img-<hash>.png)`. The slash menu's **Image** command opens a file picker.
 - LaTeX math with KaTeX: inline `$...$` and block `$$...$$`, click to edit in a popover.
 - Code blocks with a language picker, copy button, and syntax highlighting.
 - Bubble (selection) menu, `/` slash menu, find & replace (Cmd/Ctrl+F), link popover (Cmd/Ctrl+K).
@@ -55,7 +58,9 @@ bun run test         # downloads a headless VSCode and runs the @vscode/test-ele
 
 The integration suite opens a real `.md` file with the custom editor in headless VSCode and
 asserts: the webview activates and renders the Tiptap document; headings, a table, a task
-list, a code block, and KaTeX-rendered inline math are all present; loaded markdown
+list, a code block, and KaTeX-rendered inline math are all present; a remote image and a
+local `assets/` image both render as `<img>` and round-trip; pasting image bytes into a
+saved document writes a file under `assets/` and inserts a working link; loaded markdown
 round-trips faithfully; a webview edit updates the underlying `TextDocument` and
 re-serializes to valid markdown; and an external document change reloads the webview.
 
@@ -70,8 +75,11 @@ bun run package      # produces quill-vscode-<version>.vsix
 
 - **Reused verbatim** from the source repo (under `webview-src/vendor/`): `editor-setup.ts`
   (Tiptap extensions, lazy lowlight grammars, chunked markdown parse, clipboard),
-  `icons.ts`, `styles.css`, and all of `ui/` (bubble menu, slash menu, link/math popovers,
-  find bar, toasts). These have no host coupling, so updates from upstream are a straight copy.
+  `images.ts` (host-pluggable image layer: markdown round-trip, local-file rendering,
+  paste/drop), `icons.ts`, `styles.css`, and all of `ui/` (bubble menu, slash menu,
+  link/math popovers, find bar, toasts). These have no host coupling, so updates from
+  upstream are a straight copy. The host injects its image `saver` / `resolveLocal` and the
+  open-file picker via `configureImages()` and the webview message channel.
 - **Written new**: `webview-src/index.ts` (the VSCode host adapter, replacing the source
   repo's Tauri-coupled `main.ts` + `file-ops.ts`), `webview-src/theme.css` (maps the editor
   palette onto `--vscode-*` theme variables), and `src/extension.ts` (the
@@ -83,7 +91,9 @@ bun run package      # produces quill-vscode-<version>.vsix
   and KaTeX fonts all load as same-origin webview resources via `asWebviewUri()`. KaTeX CSS
   is linked (not inlined) so its relative `url(fonts/...)` references resolve correctly.
   The lowlight grammars are bundled inline (esbuild IIFE), so they need no runtime fetch
-  under the CSP.
+  under the CSP. `img-src` additionally allows `https:` (remote image URLs) and `data:`
+  (inline images); local images load as same-origin webview resources, with the document
+  folder and its `assets/` added to `localResourceRoots`.
 
 ## License
 
