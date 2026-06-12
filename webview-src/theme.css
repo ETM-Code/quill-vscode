@@ -1,0 +1,94 @@
+/*
+ * VSCode theme bridge.
+ *
+ * The vendored styles.css defines its palette with light-dark() pairs keyed off
+ * the system appearance. Inside VSCode we want the editor to follow the VSCode
+ * theme instead, so we re-point every palette token at a --vscode-* variable.
+ * VSCode injects those variables into the webview's :root and also sets
+ * `body.vscode-light` / `body.vscode-dark` / `body.vscode-high-contrast`.
+ *
+ * This file is loaded AFTER styles.css so these win the cascade.
+ */
+
+:root {
+  color-scheme: light dark;
+
+  --bg-primary: var(--vscode-editor-background);
+  --bg-secondary: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+  --bg-tertiary: var(--vscode-toolbar-hoverBackground, var(--vscode-editorWidget-background));
+  --bg-elevated: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+  --fg-primary: var(--vscode-editor-foreground, var(--vscode-foreground));
+  --fg-secondary: var(--vscode-descriptionForeground, var(--vscode-foreground));
+  --fg-muted: var(--vscode-disabledForeground, var(--vscode-descriptionForeground));
+  --accent: var(--vscode-textLink-foreground);
+  --accent-subtle: var(--vscode-editor-selectionHighlightBackground, var(--vscode-editor-inactiveSelectionBackground));
+  --border: var(--vscode-editorWidget-border, var(--vscode-widget-border, transparent));
+  --border-strong: var(--vscode-input-border, var(--vscode-editorWidget-border, transparent));
+  --selection: var(--vscode-editor-selectionBackground);
+  --danger: var(--vscode-errorForeground);
+  --shadow-popover: 0 0 0 1px var(--vscode-widget-border, transparent),
+    0 2px 8px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.36));
+
+  --code-bg: var(--vscode-textCodeBlock-background, var(--vscode-editorWidget-background));
+  --code-fg: var(--vscode-editor-foreground, var(--vscode-foreground));
+  --code-header-bg: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+
+  --font-sans: var(--vscode-font-family);
+  --font-mono: var(--vscode-editor-font-family, ui-monospace, monospace);
+  --font-size-base: var(--vscode-font-size, 14px);
+}
+
+/* The titlebar / traffic-light spacer from the Tauri app makes no sense in a
+   VSCode tab. The HTML omits the titlebar entirely; this just makes the editor
+   container fill the panel. */
+html, body {
+  height: 100%;
+  overflow: hidden;
+  background: var(--vscode-editor-background);
+}
+
+#app {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--vscode-editor-background);
+  border-radius: 0;
+}
+
+/* Use VSCode's own focus / link colors for marks the source styled with accent. */
+.tiptap a {
+  color: var(--vscode-textLink-foreground);
+  text-decoration-color: var(--vscode-textLink-foreground);
+}
+.tiptap a:hover {
+  color: var(--vscode-textLink-activeForeground, var(--vscode-textLink-foreground));
+}
+
+/* Inline code color: the source uses a hard-coded red/pink; let it inherit a
+   VSCode-appropriate tone instead. */
+.tiptap code {
+  color: var(--vscode-textPreformat-foreground, var(--fg-primary));
+  background: var(--vscode-textPreformat-background, var(--code-bg));
+}
+
+/* A small word-count footer (the Tauri titlebar is gone). */
+#word-count {
+  position: fixed;
+  bottom: 6px;
+  right: 12px;
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+  user-select: none;
+}
+
+/* Syntax highlighting: the vendored styles.css hard-codes a GitHub-ish palette
+   in light-dark() pairs that ignore the VSCode theme. Re-point the hljs tokens
+   at VSCode's own token colors so code blocks match the active theme. */
+.hljs-comment, .hljs-quote { color: var(--vscode-editorLineNumber-foreground); }
+.hljs-keyword, .hljs-selector-tag, .hljs-meta { color: var(--vscode-debugTokenExpression-name, var(--vscode-symbolIcon-keywordForeground, #c586c0)); }
+.hljs-string, .hljs-attr, .hljs-regexp { color: var(--vscode-debugTokenExpression-string, #ce9178); }
+.hljs-number, .hljs-literal, .hljs-built_in { color: var(--vscode-debugTokenExpression-number, #569cd6); }
+.hljs-title, .hljs-section, .hljs-function { color: var(--vscode-symbolIcon-functionForeground, #dcdcaa); }
+.hljs-name, .hljs-tag, .hljs-symbol { color: var(--vscode-symbolIcon-classForeground, #4ec9b0); }
