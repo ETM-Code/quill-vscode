@@ -13,7 +13,16 @@ interface ProbeResult {
   hasTable: boolean
   hasTaskList: boolean
   hasCodeBlock: boolean
+  imgCount: number
+  imgSrcs: string[]
 }
+
+// A minimal valid 1x1 transparent PNG, used as the local image fixture and as
+// the bytes for the paste-writes-a-file test.
+const PNG_1x1 = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+  'base64',
+)
 
 const SAMPLE = [
   '# Quill Test Document',
@@ -43,6 +52,12 @@ const SAMPLE = [
   '    return f"Hello, {name}"',
   '```',
   '',
+  '## Images',
+  '',
+  '![a remote image](https://example.com/y.png)',
+  '',
+  '![](assets/p.png)',
+  '',
 ].join('\n')
 
 function sleep(ms: number): Promise<void> {
@@ -62,6 +77,9 @@ suite('Quill custom editor', () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'quill-test-'))
     const filePath = path.join(tmpDir, 'sample.md')
     fs.writeFileSync(filePath, SAMPLE, 'utf8')
+    // The local image the sample references: assets/p.png next to the doc.
+    fs.mkdirSync(path.join(tmpDir, 'assets'), { recursive: true })
+    fs.writeFileSync(path.join(tmpDir, 'assets', 'p.png'), PNG_1x1)
     fileUri = vscode.Uri.file(filePath)
 
     // Ensure the extension is active.
@@ -119,6 +137,67 @@ suite('Quill custom editor', () => {
     assert.match(md, /- \[x\] Done task/, 'checked task preserved')
     assert.match(md, /\$e\^\{i\\pi\} \+ 1 = 0\$/, 'inline math preserved')
     assert.match(md, /```python[\s\S]*def greet\(name\):/, 'python code block preserved')
+  })
+
+  test('both a remote and a local image render as <img> and round-trip', async function () {
+    this.timeout(20000)
+    const result = await probe(fileUri)
+
+    // The image node type is present in the document.
+    assert.ok(result.nodeTypes.includes('image'), 'doc should contain an image node')
+
+    // Both images render as <img class="quill-image"> in the DOM.
+    assert.strictEqual(result.imgCount, 2, 'both images should render as <img>')
+
+    // The remote image keeps its https URL; the local one resolves to a
+    // vscode webview resource URI (not the raw relative path).
+    const srcs = result.imgSrcs.join('\n')
+    assert.match(srcs, /https:\/\/example\.com\/y\.png/, 'remote image src preserved')
+    assert.ok(
+      result.imgSrcs.some(s => /vscode-(resource|webview|cdn)|https:\/\/file/.test(s) && /p\.png/.test(s)),
+      `local image should resolve to a webview URI, got: ${JSON.stringify(result.imgSrcs)}`,
+    )
+
+    // Markdown round-trips: both image links serialize back faithfully.
+    assert.match(result.markdown, /!\[a remote image\]\(https:\/\/example\.com\/y\.png\)/, 'remote image markdown preserved')
+    assert.match(result.markdown, /!\[\]\(assets\/p\.png\)/, 'local image markdown preserved')
+  })
+
+  test('pasting an image into a saved doc writes assets/ and inserts a link', async function () {
+    this.timeout(20000)
+    const doc = await vscode.workspace.openTextDocument(fileUri)
+
+    // Drive the real paste path: insertImageBytes -> saver -> host writes file.
+    await vscode.commands.executeCommand(
+      'quill._test.simulatePasteImage',
+      fileUri.toString(),
+      Array.from(PNG_1x1),
+      'png',
+    )
+
+    // The host writes assets/img-<fnv>.png and the webview inserts a link to it.
+    // The fnv1a hash of this exact PNG is deterministic; wait for the file and
+    // the doc to reflect the inserted link.
+    let inserted = false
+    let writtenRel = ''
+    for (let i = 0; i < 30 && !inserted; i++) {
+      await sleep(300)
+      const m = /!\[\]\((assets\/img-[0-9a-f]{8}\.png)\)/.exec(doc.getText())
+      if (m) {
+        inserted = true
+        writtenRel = m[1]
+      }
+    }
+    assert.ok(inserted, `the pasted image link should appear in the document, got:\n${doc.getText()}`)
+
+    // The bytes were actually written to disk under assets/.
+    const onDisk = path.join(tmpDir, writtenRel)
+    assert.ok(fs.existsSync(onDisk), `image file should exist at ${onDisk}`)
+    assert.ok(fs.readFileSync(onDisk).length > 0, 'written image file should be non-empty')
+
+    // And the new image renders in the editor (now 3 images: 2 original + pasted).
+    const result = await probe(fileUri)
+    assert.ok(result.imgCount >= 3, `pasted image should render too, count=${result.imgCount}`)
   })
 
   test('a webview edit updates the underlying TextDocument', async function () {
