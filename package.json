@@ -1,0 +1,78 @@
+{
+  "name": "quill-vscode",
+  "displayName": "Quill Markdown Editor",
+  "description": "Notion-style WYSIWYG markdown editor for VSCode. Open any .md file as a real document: headings, tables, task lists, LaTeX math, and syntax-highlighted code blocks.",
+  "version": "0.1.0",
+  "publisher": "etm-code",
+  "license": "MIT",
+  "private": true,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ETM-Code/quill-vscode"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "customEditors": [
+      {
+        "viewType": "quill.markdownEditor",
+        "displayName": "Quill (WYSIWYG)",
+        "selector": [
+          { "filenamePattern": "*.md" },
+          { "filenamePattern": "*.markdown" }
+        ],
+        "priority": "option"
+      }
+    ],
+    "commands": [
+      {
+        "command": "quill.openWithQuill",
+        "title": "Open with Quill (WYSIWYG)",
+        "category": "Quill"
+      }
+    ]
+  },
+  "scripts": {
+    "build:ext": "esbuild src/extension.ts --bundle --platform=node --target=node18 --external:vscode --format=cjs --outfile=out/extension.js",
+    "build:webview": "esbuild webview-src/index.ts --bundle --format=iife --target=es2020 --outfile=media/webview.js --loader:.ttf=file --loader:.woff=file --loader:.woff2=file",
+    "copy:assets": "bun run scripts/copy-assets.ts",
+    "build": "bun run build:ext && bun run build:webview && bun run copy:assets",
+    "watch:ext": "esbuild src/extension.ts --bundle --platform=node --target=node18 --external:vscode --format=cjs --outfile=out/extension.js --sourcemap --watch",
+    "watch:webview": "esbuild webview-src/index.ts --bundle --format=iife --target=es2020 --outfile=media/webview.js --loader:.ttf=file --loader:.woff=file --loader:.woff2=file --sourcemap --watch",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.webview.json",
+    "pretest": "bun run build && tsc -p tsconfig.test.json",
+    "test": "node ./out-test/test/runTest.js",
+    "package": "vsce package --no-dependencies"
+  },
+  "dependencies": {
+    "@tiptap/core": "3.17.1",
+    "@tiptap/extension-code-block-lowlight": "3.17.1",
+    "@tiptap/extension-mathematics": "3.17.1",
+    "@tiptap/extension-list": "3.17.1",
+    "@tiptap/extension-table": "3.26.0",
+    "@tiptap/extension-typography": "3.17.1",
+    "@tiptap/extensions": "3.17.1",
+    "@tiptap/markdown": "3.17.1",
+    "@tiptap/pm": "3.17.1",
+    "@tiptap/starter-kit": "3.17.1",
+    "highlight.js": "11.11.1",
+    "katex": "0.16.28",
+    "lowlight": "3.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/test-electron": "^2.4.1",
+    "@vscode/vsce": "^3.2.0",
+    "esbuild": "^0.24.0",
+    "mocha": "^10.7.3",
+    "@types/mocha": "^10.0.7",
+    "typescript": "^5.6.2"
+  }
+}
