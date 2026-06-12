@@ -5,17 +5,38 @@
   "version": "0.1.0",
   "publisher": "etm-code",
   "license": "MIT",
-  "private": true,
+  "icon": "media/icon.png",
   "repository": {
     "type": "git",
     "url": "https://github.com/ETM-Code/quill-vscode"
   },
+  "bugs": {
+    "url": "https://github.com/ETM-Code/quill-vscode/issues"
+  },
+  "homepage": "https://github.com/ETM-Code/quill-vscode#readme",
   "engines": {
     "vscode": "^1.85.0"
   },
   "categories": [
+    "Visualization",
+    "Formatters",
     "Other"
   ],
+  "keywords": [
+    "markdown",
+    "wysiwyg",
+    "editor",
+    "preview",
+    "notion",
+    "latex",
+    "katex",
+    "tables",
+    "math"
+  ],
+  "galleryBanner": {
+    "color": "#2a1f5e",
+    "theme": "dark"
+  },
   "main": "./out/extension.js",
   "activationEvents": [],
   "contributes": {
@@ -48,11 +69,12 @@
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.webview.json",
     "pretest": "bun run build && tsc -p tsconfig.test.json",
     "test": "node ./out-test/test/runTest.js",
-    "package": "vsce package --no-dependencies"
+    "package": "bunx @vscode/vsce package --no-dependencies"
   },
   "dependencies": {
     "@tiptap/core": "3.17.1",
     "@tiptap/extension-code-block-lowlight": "3.17.1",
+    "@tiptap/extension-image": "3.17.1",
     "@tiptap/extension-mathematics": "3.17.1",
     "@tiptap/extension-list": "3.17.1",
     "@tiptap/extension-table": "3.26.0",

@@ -210,6 +210,19 @@ button {
   margin-bottom: 0;
 }
 
+/* Images */
+.tiptap img.quill-image {
+  max-width: 100%;
+  height: auto;
+  border-radius: 6px;
+  vertical-align: middle;
+}
+
+.tiptap img.quill-image.ProseMirror-selectednode {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 /* Links */
 .tiptap a {
   color: var(--accent);

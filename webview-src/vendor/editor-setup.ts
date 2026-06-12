@@ -14,6 +14,7 @@ import { BlockMath, InlineMath } from '@tiptap/extension-mathematics'
 import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight'
 import { TaskItem, TaskList } from '@tiptap/extension-list'
 import { TableKit } from '@tiptap/extension-table'
+import { QuillImage, handleImagePaste, handleImageDrop } from './images'
 import { createLowlight } from 'lowlight'
 import { icons } from './icons'
 
@@ -384,6 +385,7 @@ export function createQuillEditor(element: HTMLElement, callbacks: EditorCallbac
       TableKit.configure({
         table: { resizable: false, allowTableNodeSelection: true },
       }),
+      QuillImage,
       Markdown,
       Placeholder.configure({
         placeholder: ({ node }) => {
@@ -436,6 +438,8 @@ export function createQuillEditor(element: HTMLElement, callbacks: EditorCallbac
       },
       // Pasting markdown-looking plain text parses it into rich content.
       handlePaste: (view: EditorView, event: ClipboardEvent) => {
+        // Pasted image data wins over text handling (writes to disk + inserts).
+        if (handleImagePaste(editor, event)) return true
         const clipboard = event.clipboardData
         if (!clipboard) return false
         const html = clipboard.getData('text/html')
@@ -456,6 +460,10 @@ export function createQuillEditor(element: HTMLElement, callbacks: EditorCallbac
           console.error('markdown paste parse failed:', e)
         }
         return false
+      },
+      handleDrop: (_view: EditorView, event: DragEvent) => {
+        // Dropped image files write to disk + insert at the drop point.
+        return handleImageDrop(editor, event)
       },
       handleClick: (view: EditorView, pos: number, event: MouseEvent) => {
         const target = (event.target as HTMLElement).closest('a')
