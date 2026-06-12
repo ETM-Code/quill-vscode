@@ -15,11 +15,14 @@ interface SlashItem {
   mathKind?: 'inline' | 'block'
   /** Set on the image item: open the file picker after the slash is removed */
   insertImage?: boolean
+  /** Set on the mermaid item: open the diagram editor right after inserting */
+  insertMermaid?: boolean
 }
 
 export interface SlashMenuHooks {
   onMathInserted?: (kind: 'inline' | 'block', pos: number) => void
   onInsertImage?: () => void
+  onMermaidInserted?: (pos: number) => void
 }
 
 const ITEMS: SlashItem[] = [
@@ -37,6 +40,7 @@ const ITEMS: SlashItem[] = [
   { label: 'Divider', hint: 'Horizontal rule', icon: 'divider', keywords: 'hr rule separator line', apply: e => e.chain().focus().setHorizontalRule().run() },
   { label: 'Inline math', hint: 'LaTeX in text, $x$', icon: 'math', keywords: 'latex katex equation formula', apply: e => e.chain().focus().insertInlineMath({ latex: 'x' }).run(), mathKind: 'inline' },
   { label: 'Block math', hint: 'Display equation, $$x$$', icon: 'math', keywords: 'latex katex equation formula display', apply: e => e.chain().focus().insertBlockMath({ latex: 'x = y' }).run(), mathKind: 'block' },
+  { label: 'Mermaid diagram', hint: 'Flowchart, sequence, Gantt…', icon: 'mermaid', keywords: 'diagram flowchart sequence chart graph', apply: e => e.chain().focus().insertContent({ type: 'mermaid', attrs: { code: 'graph TD\n  A[Start] --> B[End]' } }).run(), insertMermaid: true },
 ]
 
 export class SlashMenu {
@@ -200,6 +204,20 @@ export class SlashMenu {
 
     if (item.insertImage) {
       this.hooks.onInsertImage?.()
+      return
+    }
+
+    if (item.insertMermaid && this.hooks.onMermaidInserted) {
+      // The inserted mermaid node sits just before the new cursor position.
+      const head = this.editor.state.selection.from
+      for (const pos of [head - 1, head - 2]) {
+        if (pos < 0) continue
+        const node = this.editor.state.doc.nodeAt(pos)
+        if (node && node.type.name === 'mermaid') {
+          this.hooks.onMermaidInserted(pos)
+          break
+        }
+      }
       return
     }
 

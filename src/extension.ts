@@ -86,6 +86,7 @@ interface ProbeResult {
   hasTable: boolean
   hasTaskList: boolean
   hasCodeBlock: boolean
+  hasMermaidSvg: boolean
   imgCount: number
   imgSrcs: string[]
 }

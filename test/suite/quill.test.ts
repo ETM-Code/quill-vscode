@@ -13,6 +13,7 @@ interface ProbeResult {
   hasTable: boolean
   hasTaskList: boolean
   hasCodeBlock: boolean
+  hasMermaidSvg: boolean
   imgCount: number
   imgSrcs: string[]
 }
@@ -57,6 +58,13 @@ const SAMPLE = [
   '![a remote image](https://example.com/y.png)',
   '',
   '![](assets/p.png)',
+  '',
+  '## A Mermaid Diagram',
+  '',
+  '```mermaid',
+  'graph TD',
+  '  A[Start] --> B[End]',
+  '```',
   '',
 ].join('\n')
 
@@ -161,6 +169,24 @@ suite('Quill custom editor', () => {
     // Markdown round-trips: both image links serialize back faithfully.
     assert.match(result.markdown, /!\[a remote image\]\(https:\/\/example\.com\/y\.png\)/, 'remote image markdown preserved')
     assert.match(result.markdown, /!\[\]\(assets\/p\.png\)/, 'local image markdown preserved')
+  })
+
+  test('a mermaid fence renders an SVG and round-trips', async function () {
+    this.timeout(20000)
+    // Mermaid lazy-renders; retry until the SVG appears (or give up).
+    let result = await probe(fileUri)
+    for (let i = 0; i < 10 && !result.hasMermaidSvg; i++) {
+      await sleep(800)
+      result = await probe(fileUri)
+    }
+    assert.ok(result.nodeTypes.includes('mermaid'), 'doc should contain a mermaid node')
+    assert.ok(result.hasMermaidSvg, 'the mermaid diagram should render an <svg> under the webview CSP')
+    // The ```mermaid fence serializes back faithfully (not as a plain code block).
+    assert.match(
+      result.markdown,
+      /```mermaid\ngraph TD\n {2}A\[Start\] --> B\[End\]\n```/,
+      'mermaid fence preserved on round-trip',
+    )
   })
 
   test('pasting an image into a saved doc writes assets/ and inserts a link', async function () {

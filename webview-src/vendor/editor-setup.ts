@@ -15,6 +15,7 @@ import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight'
 import { TaskItem, TaskList } from '@tiptap/extension-list'
 import { TableKit } from '@tiptap/extension-table'
 import { QuillImage, handleImagePaste, handleImageDrop } from './images'
+import { QuillMermaid, setMermaidClickHandler } from './mermaid'
 import { createLowlight } from 'lowlight'
 import { icons } from './icons'
 
@@ -289,6 +290,7 @@ export interface EditorCallbacks {
   onLinkClick: (anchor: HTMLAnchorElement, pos: number) => void
   onInlineMathClick: (node: { attrs: { latex: string } }, pos: number) => void
   onBlockMathClick: (node: { attrs: { latex: string } }, pos: number) => void
+  onMermaidClick: (code: string, pos: number) => void
   onOpenUrl: (url: string) => void
 }
 
@@ -355,6 +357,10 @@ const QuillBlockMath = BlockMath.extend({
 })
 
 export function createQuillEditor(element: HTMLElement, callbacks: EditorCallbacks): Editor {
+  // Wire the mermaid node-view click through the module-level handler so
+  // nodeViews (which don't receive custom callbacks) can reach main.ts.
+  setMermaidClickHandler((code, pos) => callbacks.onMermaidClick(code, pos))
+
   const editor: Editor = new Editor({
     element,
     // autofocus runs the focus command in a setTimeout; with content loaded in
@@ -376,6 +382,10 @@ export function createQuillEditor(element: HTMLElement, callbacks: EditorCallbac
         },
         // Heading levels 1-6, default config otherwise
       }),
+      // QuillMermaid before QuillCodeBlock: both handle the markdown `code`
+      // token, and the first handler that claims it wins. Mermaid claims only
+      // ```mermaid fences and defers everything else to the code block.
+      QuillMermaid,
       QuillCodeBlock.configure({
         lowlight,
         defaultLanguage: null,
@@ -586,7 +596,7 @@ type JSONNode = {
  * display with forced line breaks. Code blocks keep their newlines.
  */
 export function normalizeSoftBreaks(node: JSONNode): JSONNode {
-  if (node.type === 'codeBlock') return node
+  if (node.type === 'codeBlock' || node.type === 'mermaid') return node
   if (typeof node.text === 'string' && node.text.includes('\n')) {
     node.text = node.text.replace(/[ \t]*\n[ \t]*/g, ' ')
   }

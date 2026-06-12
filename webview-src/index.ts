@@ -15,6 +15,7 @@ import { configureImages, insertImageBytes } from './vendor/images'
 import { BubbleMenu } from './vendor/ui/bubble-menu'
 import { LinkPopover } from './vendor/ui/link-popover'
 import { MathPopover } from './vendor/ui/math-popover'
+import { MermaidPopover } from './vendor/ui/mermaid-popover'
 import { SlashMenu } from './vendor/ui/slash-menu'
 import { FindBar } from './vendor/ui/find-bar'
 import { elementAnchor } from './vendor/ui/popover'
@@ -66,6 +67,7 @@ interface ProbeResult {
   hasTable: boolean
   hasTaskList: boolean
   hasCodeBlock: boolean
+  hasMermaidSvg: boolean
   imgCount: number
   imgSrcs: string[]
 }
@@ -94,6 +96,7 @@ const EDIT_DEBOUNCE_MS = 220
 
 let linkPopover: LinkPopover
 let mathPopover: MathPopover
+let mermaidPopover: MermaidPopover
 
 // ---------------------------------------------------------------------------
 // Image host wiring
@@ -170,11 +173,16 @@ const editor: Editor = createQuillEditor(editorEl, {
     const dom = editor.view.nodeDOM(pos) as HTMLElement | null
     if (dom) mathPopover.show('block', node.attrs.latex, pos, elementAnchor(dom))
   },
+  onMermaidClick: (code, pos) => {
+    const dom = editor.view.nodeDOM(pos) as HTMLElement | null
+    if (dom) mermaidPopover.show(code, pos, elementAnchor(dom))
+  },
   onOpenUrl: url => post({ type: 'openLink', url }),
 })
 
 linkPopover = new LinkPopover(editor, url => post({ type: 'openLink', url }))
 mathPopover = new MathPopover(editor)
+mermaidPopover = new MermaidPopover(editor)
 const bubbleMenu = new BubbleMenu(editor, () => linkPopover.showEditor())
 const slashMenu = new SlashMenu(editor, {
   onMathInserted: (kind, pos) => {
@@ -187,6 +195,13 @@ const slashMenu = new SlashMenu(editor, {
   // The host runs showOpenDialog, reads the file, and sends the bytes back as
   // an `insertImageData` message (handled in the host message channel below).
   onInsertImage: () => post({ type: 'pickImage' }),
+  onMermaidInserted: pos => {
+    requestAnimationFrame(() => {
+      const node = editor.state.doc.nodeAt(pos)
+      const dom = editor.view.nodeDOM(pos) as HTMLElement | null
+      if (node && dom) mermaidPopover.show(node.attrs.code as string, pos, elementAnchor(dom))
+    })
+  },
 })
 const findBar = new FindBar(editor)
 void bubbleMenu
@@ -324,6 +339,9 @@ function probe(): ProbeResult {
     hasTable: !!dom.querySelector('table'),
     hasTaskList: !!dom.querySelector('ul[data-type="taskList"]'),
     hasCodeBlock: !!dom.querySelector('.code-block, pre code'),
+    // A rendered mermaid diagram proves the (inlined) mermaid bundle ran and
+    // produced SVG under the webview CSP.
+    hasMermaidSvg: !!dom.querySelector('.mermaid-block svg'),
     imgCount: imgs.length,
     imgSrcs: imgs.map(i => i.getAttribute('src') ?? ''),
   }
