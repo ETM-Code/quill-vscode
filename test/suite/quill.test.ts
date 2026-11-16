@@ -773,8 +773,22 @@ suite('Quill clipboard', () => {
     assert.ok(r.html && /<pre|<code/.test(r.html), 'text/html carries rich HTML')
   })
 
+  // Writing to the system clipboard needs the webview document to have focus,
+  // which the OS decides. A real copy always has it (the user just pressed a
+  // key or clicked), but a test run in the background may not.
+  async function requireFocus(ctx: Mocha.Context): Promise<void> {
+    for (let i = 0; i < 12; i++) {
+      await vscode.commands.executeCommand('workbench.action.focusActiveEditorGroup')
+      const r = await vscode.commands.executeCommand<CopyResult>('quill._test.copy', fileUri.toString(), 'hasFocus')
+      if (r.ok) return
+      await sleep(250)
+    }
+    ctx.skip()
+  }
+
   test('the code block copy button puts the raw code on the system clipboard', async function () {
-    this.timeout(20000)
+    this.timeout(30000)
+    await requireFocus(this)
     await vscode.env.clipboard.writeText('sentinel')
     const r = await vscode.commands.executeCommand<CopyResult>('quill._test.copy', fileUri.toString(), 'copyButton')
     assert.ok(r.ok, 'the button reports success')
@@ -782,7 +796,8 @@ suite('Quill clipboard', () => {
   })
 
   test('Copy as Plain Text (Alt+Shift+Cmd/Ctrl+C) writes rendered text without markdown', async function () {
-    this.timeout(20000)
+    this.timeout(30000)
+    await requireFocus(this)
     await vscode.env.clipboard.writeText('sentinel')
     await vscode.commands.executeCommand('quill._test.copy', fileUri.toString(), 'plain')
     const text = await vscode.env.clipboard.readText()

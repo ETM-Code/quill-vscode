@@ -70,7 +70,7 @@ type HostMessage =
   | { type: 'simulateEdit'; text: string }
   | { type: 'simulatePasteImage'; bytes: number[]; ext: string }
   | { type: 'simulateOpenLink'; href: string }
-  | { type: 'simulateCopy'; mode: 'selectAllCode' | 'copyButton' | 'plain'; id: number }
+  | { type: 'simulateCopy'; mode: 'selectAllCode' | 'copyButton' | 'plain' | 'hasFocus'; id: number }
   | { type: 'simulateAppendText'; find: string; text: string }
   | { type: 'simulateKey'; id: number; key: string; mod?: boolean; shift?: boolean; alt?: boolean }
 
@@ -554,6 +554,7 @@ function probe(): ProbeResult {
 async function simulateCopy(msg: Extract<HostMessage, { type: 'simulateCopy' }>): Promise<void> {
   const reply = (text: string | null, html: string | null, ok: boolean) =>
     post({ type: 'copy-result', id: msg.id, text, html, ok })
+  if (msg.mode === 'hasFocus') return reply(null, null, document.hasFocus())
   if (msg.mode === 'copyButton') {
     // Same code path as a user click on the code block's copy button.
     const btn = editor.view.dom.querySelector<HTMLButtonElement>('.code-block-copy')
