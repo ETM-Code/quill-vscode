@@ -228,7 +228,7 @@
     "build": "bun run build:ext && bun run build:webview && bun run copy:assets",
     "watch:ext": "esbuild src/extension.ts --bundle --platform=node --target=node18 --external:vscode --format=cjs --outfile=out/extension.js --sourcemap --watch",
     "watch:webview": "bun run scripts/build-webview.ts --watch",
-    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.webview.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.webview.json && tsc --noEmit -p tsconfig.unit.json",
     "pretest": "bun run build && tsc -p tsconfig.test.json",
     "test": "node ./out-test/test/runTest.js",
     "package": "bunx @vscode/vsce package --no-dependencies",

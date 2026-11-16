@@ -29,6 +29,8 @@ declare global {
 // document.currentScript is only set while the main bundle first runs, so read
 // it here at module load. window.__quillAssets is the fallback for test pages.
 const assets: Assets = (() => {
+  // No DOM when the vendored modules are imported by `bun test`.
+  if (typeof document === 'undefined') return {}
   const s = document.currentScript as HTMLScriptElement | null
   if (s?.dataset.katexJs || s?.dataset.mermaidJs) {
     return {
