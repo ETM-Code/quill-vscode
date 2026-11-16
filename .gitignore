@@ -36,3 +36,8 @@ target/
 *.bin.zst
 .DS_Store
 # --- end preflight block ---
+media/katex.js
+media/katex.js.map
+media/mermaid.js
+media/mermaid.js.map
+.agent-logs/

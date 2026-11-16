@@ -3,26 +3,32 @@
 // - Renders via mermaid (lazy-loaded -- the import happens only when a diagram
 //   actually needs to render so the base bundle stays small).
 // - Click to edit opens a popover (wired by main.ts via onMermaidClick callback).
-// - Markdown round-trip: parseMarkdown claims only fenced `code` tokens whose
-//   lang is "mermaid" (higher priority than CodeBlockLowlight so it wins);
-//   renderMarkdown emits exactly ```mermaid\n<code>\n```.
+// - Markdown round-trip lives in src/markdown (```mermaid fences).
 // - SVG output from mermaid is sanitized with DOMPurify before innerHTML
 //   insertion (belt-and-suspenders on top of mermaid's own securityLevel:strict).
 import { Node, mergeAttributes } from '@tiptap/core'
 import type { NodeViewRendererProps } from '@tiptap/core'
+import { loadMermaidEngine } from '../lazy'
 
 // Unique counter for mermaid render IDs (mermaid requires unique element IDs).
 let mermaidCounter = 0
 
 // Cached mermaid module (resolved on first render, reused thereafter).
-type MermaidModule = typeof import('mermaid')
+type MermaidModule = { default: typeof import('mermaid').default }
 let mermaidPromise: Promise<MermaidModule> | null = null
 let mermaidInitialized = false
+
+// Last sanitized SVG per diagram source, for rich copy (text/html).
+const svgCache = new Map<string, string>()
+
+export function renderedMermaidSvg(code: string): string | undefined {
+  return svgCache.get(code)
+}
 
 /** Load mermaid once and initialize it. Theme is set at first load only. */
 async function getMermaid(): Promise<MermaidModule> {
   if (!mermaidPromise) {
-    mermaidPromise = import('mermaid').then(m => {
+    mermaidPromise = loadMermaidEngine().then(m => {
       if (!mermaidInitialized) {
         const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches
         m.default.initialize({
@@ -30,6 +36,10 @@ async function getMermaid(): Promise<MermaidModule> {
           securityLevel: 'strict',
           theme: prefersDark ? 'dark' : 'default',
           suppressErrorRendering: true,
+          // SVG text labels: HTML labels live in <foreignObject>, which the
+          // DOMPurify SVG profile strips (boxes rendered without text).
+          htmlLabels: false,
+          flowchart: { htmlLabels: false },
         })
         mermaidInitialized = true
       }
@@ -76,6 +86,7 @@ export const QuillMermaid = Node.create({
       code: {
         default: 'graph TD\n  A[Start] --> B[End]',
         parseHTML: el => el.getAttribute('data-code') ?? '',
+        renderHTML: attrs => ({ 'data-code': attrs.code }),
       },
     }
   },
@@ -87,35 +98,6 @@ export const QuillMermaid = Node.create({
   renderHTML({ HTMLAttributes }) {
     return ['div', mergeAttributes(HTMLAttributes, { 'data-type': 'mermaid' })]
   },
-
-  // ---------------------------------------------------------------------------
-  // Markdown round-trip
-  // ---------------------------------------------------------------------------
-
-  // @tiptap/markdown routes PARSING by `markdownTokenName` (the marked token
-  // type) and SERIALIZATION by the node `name`. Mermaid lives in fenced `code`
-  // tokens, so we claim that token type, return null for non-mermaid fences (so
-  // the code block's fallback handles them), and serialize from the `mermaid`
-  // node. Higher priority + being registered before QuillCodeBlock makes this
-  // handler get tried first for `code` tokens.
-  ...(({
-    markdownTokenName: 'code',
-    priority: 200,
-
-    parseMarkdown(token: { type: string; lang?: string; text?: string }) {
-      // Only claim fenced blocks with lang="mermaid"; return null for anything
-      // else so the normal code block handler picks it up.
-      if (token.type !== 'code' || (token.lang ?? '').toLowerCase() !== 'mermaid') {
-        return null
-      }
-      return { type: 'mermaid', attrs: { code: token.text ?? '' } }
-    },
-
-    renderMarkdown(node: { attrs?: { code?: string } }) {
-      const code = node.attrs?.code ?? ''
-      return `\`\`\`mermaid\n${code}\n\`\`\``
-    },
-  }) as unknown as Record<string, unknown>),
 
   // ---------------------------------------------------------------------------
   // Node view
@@ -169,6 +151,8 @@ export const QuillMermaid = Node.create({
             USE_PROFILES: { svg: true, svgFilters: true },
           })
           svgWrap.innerHTML = clean
+          svgCache.set(code, clean)
+          if (svgCache.size > 50) svgCache.delete(svgCache.keys().next().value as string)
           errorDiv.style.display = 'none'
         }
       }

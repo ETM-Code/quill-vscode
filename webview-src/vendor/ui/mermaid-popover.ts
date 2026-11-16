@@ -3,8 +3,9 @@
 import type { Editor } from '@tiptap/core'
 import { Popover, type AnchorRect } from './popover'
 import { updateMermaidCode } from '../mermaid'
+import { loadMermaidEngine } from '../../lazy'
 
-type MermaidModule = typeof import('mermaid')
+type MermaidModule = { default: typeof import('mermaid').default }
 
 let mermaidCache: MermaidModule | null = null
 let mermaidLoad: Promise<MermaidModule> | null = null
@@ -13,7 +14,7 @@ let previewCounter = 0
 async function loadMermaid(): Promise<MermaidModule> {
   if (mermaidCache) return mermaidCache
   if (!mermaidLoad) {
-    mermaidLoad = import('mermaid').then(m => {
+    mermaidLoad = loadMermaidEngine().then(m => {
       mermaidCache = m
       return m
     })
@@ -65,8 +66,7 @@ export class MermaidPopover {
 
     this.popover.el.append(this.textarea, this.preview, this.hint)
 
-    // Kick off mermaid load eagerly so the preview is snappy.
-    void loadMermaid()
+    // Mermaid itself loads on first use (a diagram in the doc, or this popover opening).
   }
 
   show(code: string, pos: number, anchor: AnchorRect): void {
