@@ -82,7 +82,6 @@ Worth knowing before you rely on it:
 - **Images outside the document folder are sandboxed.** Pasted/dropped images go into `assets/` next to the document and render fine. An image referenced by an absolute path outside the document's folder will not load, because the webview only roots the document folder (and its `assets/`) under the CSP.
 - **Untitled / unsaved documents cannot add images.** A pasted image needs a folder on disk to write into, so save the document first.
 - **The editor core is vendored.** It is copied from the standalone app, so upstream improvements need a periodic re-sync.
-- **Undo and redo are VS Code's.** The webview forwards Cmd/Ctrl+Z to VS Code, which undoes the document and reloads the view.
 - **No print or PDF.** Use the text editor or the standalone app for that.
 
 ## Install
