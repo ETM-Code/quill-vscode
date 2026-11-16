@@ -38,6 +38,11 @@
     "theme": "dark"
   },
   "main": "./out/extension.js",
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": true
+    }
+  },
   "activationEvents": [
     "onLanguage:markdown",
     "onStartupFinished"
@@ -73,7 +78,10 @@
         "command": "quill.openWithQuill",
         "title": "Open with Quill (WYSIWYG)",
         "category": "Quill",
-        "icon": "$(book)"
+        "icon": {
+          "light": "media/quill-light.svg",
+          "dark": "media/quill-dark.svg"
+        }
       },
       {
         "command": "quill.openWithTextEditor",

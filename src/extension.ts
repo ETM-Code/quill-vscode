@@ -400,6 +400,11 @@ class QuillEditorProvider implements vscode.CustomTextEditorProvider {
       return
     }
     if (isRunnable(path)) {
+      // In Restricted Mode a link never runs a program; show it instead.
+      if (!vscode.workspace.isTrusted) {
+        await this.revealUri(uri)
+        return
+      }
       const ok = await vscode.window.showWarningMessage(
         `"${baseName(path)}" is a program or script. Opening it may run code on this computer.`,
         { modal: true },
