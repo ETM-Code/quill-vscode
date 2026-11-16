@@ -3,14 +3,23 @@
     "module": "CommonJS",
     "moduleResolution": "Node",
     "target": "ES2022",
-    "lib": ["ES2022"],
+    "lib": [
+      "ES2022"
+    ],
     "outDir": "out-test",
     "rootDir": ".",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "sourceMap": true,
-    "types": ["node", "mocha", "vscode"]
+    "types": [
+      "node",
+      "mocha",
+      "vscode"
+    ]
   },
-  "include": ["test/**/*.ts"]
+  "include": [
+    "test/runTest.ts",
+    "test/suite/**/*.ts"
+  ]
 }

@@ -14,3 +14,4 @@ bun.lockb
 .gitignore
 .editorconfig
 **/.DS_Store
+.agent-logs/**

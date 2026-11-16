@@ -2,7 +2,7 @@
   "name": "quill-vscode",
   "displayName": "Quill Markdown Editor",
   "description": "Notion-style WYSIWYG markdown editor for VSCode. Open any .md file as a real document: headings, tables, task lists, LaTeX math, and syntax-highlighted code blocks.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publisher": "etm-code",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -38,6 +38,11 @@
     "theme": "dark"
   },
   "main": "./out/extension.js",
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": true
+    }
+  },
   "activationEvents": [
     "onLanguage:markdown",
     "onStartupFinished"
@@ -48,8 +53,12 @@
         "viewType": "quill.markdownEditor",
         "displayName": "Quill (WYSIWYG)",
         "selector": [
-          { "filenamePattern": "*.md" },
-          { "filenamePattern": "*.markdown" }
+          {
+            "filenamePattern": "*.md"
+          },
+          {
+            "filenamePattern": "*.markdown"
+          }
         ],
         "priority": "option"
       }
@@ -69,13 +78,26 @@
         "command": "quill.openWithQuill",
         "title": "Open with Quill (WYSIWYG)",
         "category": "Quill",
-        "icon": "$(book)"
+        "icon": {
+          "light": "media/quill-light.svg",
+          "dark": "media/quill-dark.svg"
+        }
       },
       {
         "command": "quill.openWithTextEditor",
         "title": "Open as Text (View Source)",
         "category": "Quill",
         "icon": "$(code)"
+      },
+      {
+        "command": "quill.toggleOutline",
+        "title": "Toggle Outline",
+        "category": "Quill"
+      },
+      {
+        "command": "quill.editorShortcut",
+        "title": "Editor Shortcut (handled by the Quill editor)",
+        "category": "Quill"
       }
     ],
     "menus": {
@@ -90,47 +112,175 @@
           "group": "navigation",
           "when": "activeCustomEditorId == quill.markdownEditor"
         }
+      ],
+      "commandPalette": [
+        {
+          "command": "quill.editorShortcut",
+          "when": "false"
+        },
+        {
+          "command": "quill.toggleOutline",
+          "when": "activeCustomEditorId == quill.markdownEditor"
+        }
       ]
-    }
+    },
+    "keybindings": [
+      {
+        "command": "quill.toggleOutline",
+        "key": "ctrl+shift+o",
+        "mac": "cmd+shift+o",
+        "when": "activeCustomEditorId == quill.markdownEditor"
+      },
+      {
+        "command": "quill.openWithTextEditor",
+        "key": "ctrl+/",
+        "mac": "cmd+/",
+        "when": "activeCustomEditorId == quill.markdownEditor"
+      },
+      {
+        "command": "quill.editorShortcut",
+        "key": "ctrl+b",
+        "mac": "cmd+b",
+        "when": "activeCustomEditorId == quill.markdownEditor"
+      },
+      {
+        "command": "quill.editorShortcut",
+        "key": "ctrl+e",
+        "mac": "cmd+e",
+        "when": "activeCustomEditorId == quill.markdownEditor"
+      },
+      {
+        "command": "quill.editorShortcut",
+        "key": "ctrl+shift+x",
+        "mac": "cmd+shift+x",
+        "when": "activeCustomEditorId == quill.markdownEditor"
+      },
+      {
+        "command": "quill.editorShortcut",
+        "key": "ctrl+shift+h",
+        "mac": "cmd+shift+h",
+        "when": "activeCustomEditorId == quill.markdownEditor"
+      },
+      {
+        "command": "quill.editorShortcut",
+        "key": "ctrl+shift+m",
+        "mac": "cmd+shift+m",
+        "when": "activeCustomEditorId == quill.markdownEditor"
+      },
+      {
+        "command": "quill.editorShortcut",
+        "key": "ctrl+shift+b",
+        "mac": "cmd+shift+b",
+        "when": "activeCustomEditorId == quill.markdownEditor"
+      },
+      {
+        "command": "quill.editorShortcut",
+        "key": "ctrl+alt+shift+c",
+        "mac": "cmd+alt+shift+c",
+        "when": "activeCustomEditorId == quill.markdownEditor"
+      },
+      {
+        "command": "quill.editorShortcut",
+        "key": "ctrl+alt+c",
+        "mac": "cmd+alt+c",
+        "when": "activeCustomEditorId == quill.markdownEditor"
+      },
+      {
+        "command": "quill.editorShortcut",
+        "key": "ctrl+\\",
+        "mac": "cmd+\\",
+        "when": "activeCustomEditorId == quill.markdownEditor"
+      },
+      {
+        "command": "quill.editorShortcut",
+        "key": "ctrl+1",
+        "mac": "cmd+1",
+        "when": "activeCustomEditorId == quill.markdownEditor"
+      },
+      {
+        "command": "quill.editorShortcut",
+        "key": "ctrl+2",
+        "mac": "cmd+2",
+        "when": "activeCustomEditorId == quill.markdownEditor"
+      },
+      {
+        "command": "quill.editorShortcut",
+        "key": "ctrl+3",
+        "mac": "cmd+3",
+        "when": "activeCustomEditorId == quill.markdownEditor"
+      },
+      {
+        "command": "quill.editorShortcut",
+        "key": "ctrl+4",
+        "mac": "cmd+4",
+        "when": "activeCustomEditorId == quill.markdownEditor"
+      },
+      {
+        "command": "quill.editorShortcut",
+        "key": "ctrl+5",
+        "mac": "cmd+5",
+        "when": "activeCustomEditorId == quill.markdownEditor"
+      },
+      {
+        "command": "quill.editorShortcut",
+        "key": "ctrl+6",
+        "mac": "cmd+6",
+        "when": "activeCustomEditorId == quill.markdownEditor"
+      }
+    ]
   },
   "scripts": {
     "build:ext": "esbuild src/extension.ts --bundle --platform=node --target=node18 --external:vscode --format=cjs --outfile=out/extension.js",
-    "build:webview": "esbuild webview-src/index.ts --bundle --format=iife --target=es2020 --outfile=media/webview.js --loader:.ttf=file --loader:.woff=file --loader:.woff2=file",
+    "build:webview": "bun run scripts/build-webview.ts",
     "copy:assets": "bun run scripts/copy-assets.ts",
     "build": "bun run build:ext && bun run build:webview && bun run copy:assets",
     "watch:ext": "esbuild src/extension.ts --bundle --platform=node --target=node18 --external:vscode --format=cjs --outfile=out/extension.js --sourcemap --watch",
-    "watch:webview": "esbuild webview-src/index.ts --bundle --format=iife --target=es2020 --outfile=media/webview.js --loader:.ttf=file --loader:.woff=file --loader:.woff2=file --sourcemap --watch",
-    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.webview.json",
+    "watch:webview": "bun run scripts/build-webview.ts --watch",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.webview.json && tsc --noEmit -p tsconfig.unit.json",
     "pretest": "bun run build && tsc -p tsconfig.test.json",
     "test": "node ./out-test/test/runTest.js",
-    "package": "bunx @vscode/vsce package --no-dependencies"
+    "package": "bunx @vscode/vsce package --no-dependencies",
+    "test:unit": "bun test test/unit"
   },
   "dependencies": {
     "@tiptap/core": "3.17.1",
+    "@tiptap/extension-code": "3.17.1",
     "@tiptap/extension-code-block-lowlight": "3.17.1",
-    "@tiptap/extension-image": "3.17.1",
-    "@tiptap/extension-mathematics": "3.17.1",
+    "@tiptap/extension-image": "3.26.1",
     "@tiptap/extension-list": "3.17.1",
+    "@tiptap/extension-mathematics": "3.17.1",
     "@tiptap/extension-table": "3.26.0",
-    "@tiptap/extension-typography": "3.17.1",
     "@tiptap/extensions": "3.17.1",
-    "@tiptap/markdown": "3.17.1",
     "@tiptap/pm": "3.17.1",
     "@tiptap/starter-kit": "3.17.1",
     "dompurify": "3.4.10",
     "highlight.js": "11.11.1",
     "katex": "0.16.28",
     "lowlight": "3.3.0",
+    "markdown-it": "14.1.0",
+    "markdown-it-footnote": "4.0.0",
+    "markdown-it-mark": "4.0.0",
     "mermaid": "11.15.0"
   },
   "devDependencies": {
+    "@types/bun": "1.4.4",
+    "@types/markdown-it": "14.2.0",
+    "@types/mocha": "^10.0.7",
     "@types/node": "^20.0.0",
     "@types/vscode": "^1.85.0",
-    "@vscode/test-electron": "^2.4.1",
+    "@vscode/test-electron": "^3.1.0",
     "@vscode/vsce": "^3.2.0",
     "esbuild": "^0.24.0",
     "mocha": "^10.7.3",
-    "@types/mocha": "^10.0.7",
     "typescript": "^5.6.2"
+  },
+  "overrides": {
+    "prosemirror-changeset": "2.3.1",
+    "prosemirror-gapcursor": "1.4.0",
+    "prosemirror-markdown": "1.13.3",
+    "prosemirror-menu": "1.2.5",
+    "prosemirror-model": "1.25.4",
+    "prosemirror-transform": "1.11.0",
+    "prosemirror-view": "1.41.5"
   }
 }
