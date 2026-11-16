@@ -2,7 +2,7 @@
   "name": "quill-vscode",
   "displayName": "Quill Markdown Editor",
   "description": "Notion-style WYSIWYG markdown editor for VSCode. Open any .md file as a real document: headings, tables, task lists, LaTeX math, and syntax-highlighted code blocks.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publisher": "etm-code",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -80,6 +80,16 @@
         "title": "Open as Text (View Source)",
         "category": "Quill",
         "icon": "$(code)"
+      },
+      {
+        "command": "quill.toggleOutline",
+        "title": "Toggle Outline",
+        "category": "Quill"
+      },
+      {
+        "command": "quill.editorShortcut",
+        "title": "Editor Shortcut (handled by the Quill editor)",
+        "category": "Quill"
       }
     ],
     "menus": {
@@ -94,8 +104,122 @@
           "group": "navigation",
           "when": "activeCustomEditorId == quill.markdownEditor"
         }
+      ],
+      "commandPalette": [
+        {
+          "command": "quill.editorShortcut",
+          "when": "false"
+        },
+        {
+          "command": "quill.toggleOutline",
+          "when": "activeCustomEditorId == quill.markdownEditor"
+        }
       ]
-    }
+    },
+    "keybindings": [
+      {
+        "command": "quill.toggleOutline",
+        "key": "ctrl+shift+o",
+        "mac": "cmd+shift+o",
+        "when": "activeCustomEditorId == quill.markdownEditor"
+      },
+      {
+        "command": "quill.openWithTextEditor",
+        "key": "ctrl+/",
+        "mac": "cmd+/",
+        "when": "activeCustomEditorId == quill.markdownEditor"
+      },
+      {
+        "command": "quill.editorShortcut",
+        "key": "ctrl+b",
+        "mac": "cmd+b",
+        "when": "activeCustomEditorId == quill.markdownEditor"
+      },
+      {
+        "command": "quill.editorShortcut",
+        "key": "ctrl+e",
+        "mac": "cmd+e",
+        "when": "activeCustomEditorId == quill.markdownEditor"
+      },
+      {
+        "command": "quill.editorShortcut",
+        "key": "ctrl+shift+x",
+        "mac": "cmd+shift+x",
+        "when": "activeCustomEditorId == quill.markdownEditor"
+      },
+      {
+        "command": "quill.editorShortcut",
+        "key": "ctrl+shift+h",
+        "mac": "cmd+shift+h",
+        "when": "activeCustomEditorId == quill.markdownEditor"
+      },
+      {
+        "command": "quill.editorShortcut",
+        "key": "ctrl+shift+m",
+        "mac": "cmd+shift+m",
+        "when": "activeCustomEditorId == quill.markdownEditor"
+      },
+      {
+        "command": "quill.editorShortcut",
+        "key": "ctrl+shift+b",
+        "mac": "cmd+shift+b",
+        "when": "activeCustomEditorId == quill.markdownEditor"
+      },
+      {
+        "command": "quill.editorShortcut",
+        "key": "ctrl+alt+shift+c",
+        "mac": "cmd+alt+shift+c",
+        "when": "activeCustomEditorId == quill.markdownEditor"
+      },
+      {
+        "command": "quill.editorShortcut",
+        "key": "ctrl+alt+c",
+        "mac": "cmd+alt+c",
+        "when": "activeCustomEditorId == quill.markdownEditor"
+      },
+      {
+        "command": "quill.editorShortcut",
+        "key": "ctrl+\\",
+        "mac": "cmd+\\",
+        "when": "activeCustomEditorId == quill.markdownEditor"
+      },
+      {
+        "command": "quill.editorShortcut",
+        "key": "ctrl+1",
+        "mac": "cmd+1",
+        "when": "activeCustomEditorId == quill.markdownEditor"
+      },
+      {
+        "command": "quill.editorShortcut",
+        "key": "ctrl+2",
+        "mac": "cmd+2",
+        "when": "activeCustomEditorId == quill.markdownEditor"
+      },
+      {
+        "command": "quill.editorShortcut",
+        "key": "ctrl+3",
+        "mac": "cmd+3",
+        "when": "activeCustomEditorId == quill.markdownEditor"
+      },
+      {
+        "command": "quill.editorShortcut",
+        "key": "ctrl+4",
+        "mac": "cmd+4",
+        "when": "activeCustomEditorId == quill.markdownEditor"
+      },
+      {
+        "command": "quill.editorShortcut",
+        "key": "ctrl+5",
+        "mac": "cmd+5",
+        "when": "activeCustomEditorId == quill.markdownEditor"
+      },
+      {
+        "command": "quill.editorShortcut",
+        "key": "ctrl+6",
+        "mac": "cmd+6",
+        "when": "activeCustomEditorId == quill.markdownEditor"
+      }
+    ]
   },
   "scripts": {
     "build:ext": "esbuild src/extension.ts --bundle --platform=node --target=node18 --external:vscode --format=cjs --outfile=out/extension.js",

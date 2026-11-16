@@ -1,4 +1,6 @@
+import * as os from 'node:os'
 import * as vscode from 'vscode'
+import { baseName, isOpenableUrl, isQuillDocument, isRunnable } from './routing'
 
 export function activate(context: vscode.ExtensionContext): void {
   const provider = new QuillEditorProvider(context)
@@ -30,6 +32,19 @@ export function activate(context: vscode.ExtensionContext): void {
       await vscode.commands.executeCommand('vscode.openWith', uri, 'default')
     }),
   )
+
+  // "Toggle Outline" (also bound to Shift+Cmd/Ctrl+O while a Quill editor is focused).
+  context.subscriptions.push(
+    vscode.commands.registerCommand('quill.toggleOutline', () => provider.sendToActive({ type: 'command', id: 'toggle-outline' })),
+  )
+
+  // Keybinding placeholder. Quill's editor handles shortcuts such as Cmd+B or
+  // Shift+Cmd+M itself, but the VS Code webview shell also forwards every
+  // keystroke to the workbench, which would run its own command for the same
+  // keys (toggle sidebar, Problems panel, Extensions view...). Contributing a
+  // keybinding for these keys that points at this empty command, only while a
+  // Quill editor is active, makes the workbench do nothing. See package.json.
+  context.subscriptions.push(vscode.commands.registerCommand('quill.editorShortcut', () => undefined))
 
   // Sticky default: when a markdown TEXT editor becomes active and the setting
   // is on, flip the default for *.md / *.markdown back to the text editor. When
@@ -63,6 +78,24 @@ export function activate(context: vscode.ExtensionContext): void {
         (uri: string, bytes: number[], ext: string) =>
           provider.testSimulatePasteImage(uri, bytes, ext),
       ),
+      vscode.commands.registerCommand('quill._test.simulate', (uri: string, msg: object) =>
+        provider.testSimulate(uri, msg),
+      ),
+      vscode.commands.registerCommand('quill._test.simulateOpenLink', (uri: string, href: string) =>
+        provider.testSimulate(uri, { type: 'simulateOpenLink', href }),
+      ),
+      vscode.commands.registerCommand('quill._test.simulateKey', (uri: string, key: string, mods: object) =>
+        provider.testSimulate(uri, { type: 'simulateKey', key, ...mods }),
+      ),
+      vscode.commands.registerCommand('quill._test.copy', (uri: string, mode: string) =>
+        provider.testCopy(uri, mode),
+      ),
+      // Feed a message to the host as if the webview had posted it.
+      vscode.commands.registerCommand('quill._test.hostMessage', (uri: string, msg: WebviewToHost) =>
+        provider.testHostMessage(uri, msg),
+      ),
+      vscode.commands.registerCommand('quill._test.takeCalls', () => provider.takeCalls()),
+      vscode.commands.registerCommand('quill._test.sessionInfo', (uri: string) => provider.testSessionInfo(uri)),
     )
   }
 }
@@ -74,10 +107,13 @@ export function deactivate(): void {
 type WebviewToHost =
   | { type: 'ready' }
   | { type: 'edit'; text: string }
-  | { type: 'openLink'; url: string }
+  | { type: 'openExternal'; url: string }
+  | { type: 'openPath'; kind: 'markdown' | 'file'; path: string; anchor: string | null }
+  | { type: 'revealPath'; path: string }
   | { type: 'saveImage'; id: number; bytes: number[]; ext: string }
   | { type: 'pickImage' }
   | { type: 'probe-result'; id: number; result: ProbeResult }
+  | { type: 'copy-result'; id: number; text: string | null; html: string | null; ok: boolean }
 
 interface ProbeResult {
   markdown: string
@@ -87,13 +123,31 @@ interface ProbeResult {
   hasTaskList: boolean
   hasCodeBlock: boolean
   hasMermaidSvg: boolean
+  hasCallout: boolean
+  calloutKinds: string[]
+  hasFrontMatter: boolean
+  hasFootnote: boolean
+  hasDetails: boolean
+  hasHighlight: boolean
   imgCount: number
   imgSrcs: string[]
+  outlineVisible: boolean
+  autocorrect: string | null
+  typographyActive: boolean
+}
+
+/** What the host did for a webview request. Recorded only under QUILL_TEST. */
+export interface HostCall {
+  kind: 'openExternal' | 'openMarkdown' | 'openFile' | 'reveal'
+  target: string
+  anchor?: string | null
 }
 
 interface Session {
   webview: vscode.Webview
   document: vscode.TextDocument
+  panel: vscode.WebviewPanel
+  ready: boolean
 }
 
 class QuillEditorProvider implements vscode.CustomTextEditorProvider {
@@ -103,6 +157,11 @@ class QuillEditorProvider implements vscode.CustomTextEditorProvider {
   private readonly sessions = new Map<string, Session>()
   private probeId = 0
   private readonly pendingProbes = new Map<number, (r: ProbeResult) => void>()
+  private readonly pendingCopies = new Map<number, (r: CopyResult) => void>()
+  private readonly pendingAnchors = new Map<string, string>()
+  private readonly calls: HostCall[] = []
+  private readonly testMode = process.env.QUILL_TEST === '1'
+  private activeSession: Session | undefined
 
   public static register(
     context: vscode.ExtensionContext,
@@ -147,6 +206,49 @@ class QuillEditorProvider implements vscode.CustomTextEditorProvider {
     const session = this.sessions.get(uri)
     if (!session) throw new Error(`no Quill session for ${uri}`)
     await session.webview.postMessage({ type: 'simulateEdit', text })
+  }
+
+  public async testSimulate(uri: string, msg: object): Promise<void> {
+    const session = this.sessions.get(uri)
+    if (!session) throw new Error(`no Quill session for ${uri}`)
+    await session.webview.postMessage(msg)
+  }
+
+  public testCopy(uri: string, mode: string): Promise<CopyResult> {
+    const session = this.sessions.get(uri)
+    if (!session) return Promise.reject(new Error(`no Quill session for ${uri}`))
+    const id = ++this.probeId
+    return new Promise<CopyResult>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pendingCopies.delete(id)
+        reject(new Error('copy simulation timed out'))
+      }, 5000)
+      this.pendingCopies.set(id, r => {
+        clearTimeout(timer)
+        resolve(r)
+      })
+      void session.webview.postMessage({ type: 'simulateCopy', mode, id })
+    })
+  }
+
+  public async testHostMessage(uri: string, msg: WebviewToHost): Promise<void> {
+    const session = this.sessions.get(uri)
+    if (!session) throw new Error(`no Quill session for ${uri}`)
+    await this.handleLinkMessage(session.document, msg)
+  }
+
+  public takeCalls(): HostCall[] {
+    return this.calls.splice(0)
+  }
+
+  public testSessionInfo(uri: string): { ready: boolean; active: boolean } | null {
+    const s = this.sessions.get(uri)
+    return s ? { ready: s.ready, active: this.activeSession === s } : null
+  }
+
+  /** Post a message to the Quill editor that currently has focus. */
+  public sendToActive(msg: object): void {
+    if (this.activeSession) void this.activeSession.webview.postMessage(msg)
   }
 
   public async testSimulatePasteImage(uri: string, bytes: number[], ext: string): Promise<void> {
@@ -229,6 +331,108 @@ class QuillEditorProvider implements vscode.CustomTextEditorProvider {
     }
   }
 
+  // --- link and file routing (requests from the webview) ---
+
+  /** Where a path from the webview points: same scheme and authority as the document. */
+  private uriFor(document: vscode.TextDocument, path: string): vscode.Uri {
+    return document.uri.with({ path, query: '', fragment: '' })
+  }
+
+  private async handleLinkMessage(document: vscode.TextDocument, msg: WebviewToHost): Promise<void> {
+    switch (msg.type) {
+      case 'openExternal':
+        await this.openExternal(msg.url)
+        break
+      case 'openPath':
+        if (msg.kind === 'markdown') await this.openMarkdown(document, msg.path, msg.anchor)
+        else await this.openFile(document, msg.path)
+        break
+      case 'revealPath':
+        await this.reveal(document, msg.path)
+        break
+    }
+  }
+
+  private async openExternal(url: string): Promise<void> {
+    if (!isOpenableUrl(url)) return
+    if (this.testMode) {
+      this.calls.push({ kind: 'openExternal', target: url })
+      return
+    }
+    await vscode.env.openExternal(vscode.Uri.parse(url))
+  }
+
+  /** `.md` / `.markdown` open in VS Code with the Quill editor; other text-like targets in the normal editor. */
+  private async openMarkdown(document: vscode.TextDocument, path: string, anchor: string | null): Promise<void> {
+    const uri = this.uriFor(document, path)
+    if (!(await exists(uri))) {
+      void vscode.window.showErrorMessage(`Quill: ${baseName(path)} was not found.`)
+      return
+    }
+    this.calls.push({ kind: 'openMarkdown', target: uri.toString(), anchor })
+    if (!isQuillDocument(path)) {
+      await vscode.commands.executeCommand('vscode.open', uri)
+      return
+    }
+    if (anchor) this.pendingAnchors.set(uri.toString(), anchor)
+    await vscode.commands.executeCommand('vscode.openWith', uri, QuillEditorProvider.viewType)
+    // Already open and ready: scroll now. A freshly created editor picks the
+    // anchor up when it reports ready.
+    const open = this.sessions.get(uri.toString())
+    if (anchor && open?.ready) {
+      this.pendingAnchors.delete(uri.toString())
+      void open.webview.postMessage({ type: 'scrollToAnchor', anchor })
+    }
+  }
+
+  /** Other local files: the default app, or the Explorer for folders. */
+  private async openFile(document: vscode.TextDocument, path: string): Promise<void> {
+    const uri = this.uriFor(document, path)
+    const stat = await statOrNull(uri)
+    if (!stat) {
+      void vscode.window.showErrorMessage(`Quill: ${baseName(path)} was not found.`)
+      return
+    }
+    this.calls.push({ kind: 'openFile', target: uri.toString() })
+    if (this.testMode) return
+    if (stat.type & vscode.FileType.Directory) {
+      await this.revealUri(uri)
+      return
+    }
+    if (isRunnable(path)) {
+      const ok = await vscode.window.showWarningMessage(
+        `"${baseName(path)}" is a program or script. Opening it may run code on this computer.`,
+        { modal: true },
+        'Open',
+      )
+      if (ok !== 'Open') return
+    }
+    // Only a local file can go to the operating system; for remote workspaces
+    // let VS Code open it.
+    if (uri.scheme === 'file') await vscode.env.openExternal(uri)
+    else await vscode.commands.executeCommand('vscode.open', uri)
+  }
+
+  private async reveal(document: vscode.TextDocument, path: string): Promise<void> {
+    const uri = this.uriFor(document, path)
+    this.calls.push({ kind: 'reveal', target: uri.toString() })
+    if (this.testMode) return
+    if (!(await exists(uri))) {
+      void vscode.window.showErrorMessage(`Quill: ${baseName(path)} was not found.`)
+      return
+    }
+    await this.revealUri(uri)
+  }
+
+  private async revealUri(uri: vscode.Uri): Promise<void> {
+    // The Explorer shows files inside the workspace; anything else goes to the OS file manager.
+    if (vscode.workspace.getWorkspaceFolder(uri)) {
+      await vscode.commands.executeCommand('revealInExplorer', uri)
+    } else {
+      await vscode.commands.executeCommand('revealFileInOS', uri)
+    }
+  }
+
   public async resolveCustomTextEditor(
     document: vscode.TextDocument,
     webviewPanel: vscode.WebviewPanel,
@@ -265,7 +469,13 @@ class QuillEditorProvider implements vscode.CustomTextEditorProvider {
     webview.html = this.getHtml(webview)
 
     const uriKey = document.uri.toString()
-    this.sessions.set(uriKey, { webview, document })
+    const session: Session = { webview, document, panel: webviewPanel, ready: false }
+    this.sessions.set(uriKey, session)
+    if (webviewPanel.active) this.activeSession = session
+    const viewSub = webviewPanel.onDidChangeViewState(e => {
+      if (e.webviewPanel.active) this.activeSession = session
+      else if (this.activeSession === session) this.activeSession = undefined
+    })
 
     // The text the webview last reported to us. Used to suppress the echo: when
     // we apply the webview's edit to the document, onDidChangeTextDocument fires,
@@ -273,14 +483,20 @@ class QuillEditorProvider implements vscode.CustomTextEditorProvider {
     let lastTextFromWebview: string | null = null
     let ready = false
 
+    // Home folder for "~/" links; only meaningful for local files.
+    const home = document.uri.scheme === 'file' ? vscode.Uri.file(os.homedir()).path : null
+    const docPath = docDir ? document.uri.path : null
+
     const pushDocumentToWebview = (reason: 'init' | 'update') => {
-      void webview.postMessage({ type: reason, text: document.getText(), imageBase })
+      void webview.postMessage({ type: reason, text: document.getText(), imageBase, docPath, home })
     }
 
     // Apply the webview's serialized markdown to the document as a single
     // whole-document replacement. VSCode owns dirty state, undo, and save; we
     // never hand-roll incremental ProseMirror<->TextDocument diffing.
-    const applyEditToDocument = async (text: string) => {
+    const applyEditToDocument = async (text: string): Promise<void> => {
+      // The webview works in LF; keep the document's own line endings.
+      if (document.eol === vscode.EndOfLine.CRLF) text = text.replace(/\r?\n/g, '\r\n')
       if (text === document.getText()) return
       lastTextFromWebview = text
       const edit = new vscode.WorkspaceEdit()
@@ -305,15 +521,25 @@ class QuillEditorProvider implements vscode.CustomTextEditorProvider {
 
     const messageSub = webview.onDidReceiveMessage(async (msg: WebviewToHost) => {
       switch (msg.type) {
-        case 'ready':
+        case 'ready': {
           ready = true
+          session.ready = true
           pushDocumentToWebview('init')
+          const anchor = this.pendingAnchors.get(uriKey)
+          if (anchor) {
+            this.pendingAnchors.delete(uriKey)
+            // Give the first render a moment so the heading exists.
+            setTimeout(() => void webview.postMessage({ type: 'scrollToAnchor', anchor }), 250)
+          }
           break
+        }
         case 'edit':
           await applyEditToDocument(msg.text)
           break
-        case 'openLink':
-          if (msg.url) void vscode.env.openExternal(vscode.Uri.parse(msg.url))
+        case 'openExternal':
+        case 'openPath':
+        case 'revealPath':
+          await this.handleLinkMessage(document, msg)
           break
         case 'saveImage':
           await this.handleSaveImage(webview, document, msg.id, msg.bytes, msg.ext)
@@ -321,6 +547,14 @@ class QuillEditorProvider implements vscode.CustomTextEditorProvider {
         case 'pickImage':
           await this.handlePickImage(webview, document)
           break
+        case 'copy-result': {
+          const resolve = this.pendingCopies.get(msg.id)
+          if (resolve) {
+            this.pendingCopies.delete(msg.id)
+            resolve({ text: msg.text, html: msg.html, ok: msg.ok })
+          }
+          break
+        }
         case 'probe-result': {
           const resolve = this.pendingProbes.get(msg.id)
           if (resolve) {
@@ -334,6 +568,8 @@ class QuillEditorProvider implements vscode.CustomTextEditorProvider {
 
     webviewPanel.onDidDispose(() => {
       this.sessions.delete(uriKey)
+      if (this.activeSession === session) this.activeSession = undefined
+      viewSub.dispose()
       changeSub.dispose()
       messageSub.dispose()
     })
@@ -343,18 +579,19 @@ class QuillEditorProvider implements vscode.CustomTextEditorProvider {
     const scriptUri = webview.asWebviewUri(
       vscode.Uri.joinPath(this.context.extensionUri, 'media', 'webview.js'),
     )
-    // KaTeX CSS is linked (not inlined) so its relative url(fonts/...) refs
-    // resolve against media/ and the font files load under the CSP.
-    const katexCssUri = webview.asWebviewUri(
-      vscode.Uri.joinPath(this.context.extensionUri, 'media', 'katex.min.css'),
-    )
+    // KaTeX and Mermaid are separate scripts that the webview injects the first
+    // time a document needs them (webview-src/lazy.ts). The stylesheet is linked
+    // (not inlined) so its relative url(fonts/...) refs resolve against media/.
+    const mediaUri = (file: string) =>
+      webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'media', file)).toString()
     // The bundled editor + theme CSS that esbuild emits next to the JS.
     const styleUri = webview.asWebviewUri(
       vscode.Uri.joinPath(this.context.extensionUri, 'media', 'webview.css'),
     )
     const nonce = getNonce()
-    // Strict CSP: only our nonce'd script runs. Styles load as linked
-    // stylesheets (webview.css + katex.min.css) from media/. style-src still
+    // Strict CSP: only nonce'd scripts run (the main bundle, and the engine
+    // scripts it injects with the same nonce). Styles load as linked
+    // stylesheets (webview.css, and katex.min.css on demand) from media/. style-src still
     // needs 'unsafe-inline' because ProseMirror and KaTeX set inline style=""
     // attributes, which CSP Level 2 governs under style-src. KaTeX fonts load
     // as same-origin webview resources via font-src. No remote anything, no eval.
@@ -374,7 +611,6 @@ class QuillEditorProvider implements vscode.CustomTextEditorProvider {
     <meta charset="UTF-8" />
     <meta http-equiv="Content-Security-Policy" content="${csp}" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <link rel="stylesheet" href="${katexCssUri}" />
     <link rel="stylesheet" href="${styleUri}" />
     <title>Quill</title>
   </head>
@@ -384,8 +620,12 @@ class QuillEditorProvider implements vscode.CustomTextEditorProvider {
         <div id="editor"></div>
       </main>
       <span id="word-count"></span>
+      <div class="titlebar-right"></div>
     </div>
-    <script nonce="${nonce}" src="${scriptUri}"></script>
+    <script nonce="${nonce}" src="${scriptUri}"
+      data-katex-js="${mediaUri('katex.js')}"
+      data-katex-css="${mediaUri('katex.min.css')}"
+      data-mermaid-js="${mediaUri('mermaid.js')}"></script>
   </body>
 </html>`
   }
@@ -441,6 +681,24 @@ async function setMarkdownAssociations(target: string): Promise<void> {
     next,
     vscode.ConfigurationTarget.Global,
   )
+}
+
+interface CopyResult {
+  text: string | null
+  html: string | null
+  ok: boolean
+}
+
+async function statOrNull(uri: vscode.Uri): Promise<vscode.FileStat | null> {
+  try {
+    return await vscode.workspace.fs.stat(uri)
+  } catch {
+    return null
+  }
+}
+
+async function exists(uri: vscode.Uri): Promise<boolean> {
+  return (await statOrNull(uri)) !== null
 }
 
 // FNV-1a over the bytes, matching the app's hashBytes so the same image

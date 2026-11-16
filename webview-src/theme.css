@@ -36,6 +36,9 @@
   --font-sans: var(--vscode-font-family);
   --font-mono: var(--vscode-editor-font-family, ui-monospace, monospace);
   --font-size-base: var(--vscode-font-size, 14px);
+
+  /* No titlebar in a VS Code tab. */
+  --titlebar-height: 0px;
 }
 
 /* The titlebar / traffic-light spacer from the Tauri app makes no sense in a
@@ -92,3 +95,17 @@ html, body {
 .hljs-number, .hljs-literal, .hljs-built_in { color: var(--vscode-debugTokenExpression-number, #569cd6); }
 .hljs-title, .hljs-section, .hljs-function { color: var(--vscode-symbolIcon-functionForeground, #dcdcaa); }
 .hljs-name, .hljs-tag, .hljs-symbol { color: var(--vscode-symbolIcon-classForeground, #4ec9b0); }
+
+/* The outline toggle lives in a small floating cluster at the top right (the
+   app puts it in its titlebar). */
+.titlebar-right {
+  position: fixed;
+  top: 6px;
+  right: 14px;
+  z-index: 30;
+  display: flex;
+}
+.titlebar-btn {
+  cursor: pointer;
+  color: var(--vscode-icon-foreground, var(--fg-secondary));
+}
