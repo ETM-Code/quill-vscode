@@ -1,8 +1,7 @@
 # Vendored editor core
 
-Copied from the Quill app (https://github.com/ETM-Code/quill) at commit `72b30e8`
-(`origin/main`). To re-sync, copy the same files from the app's `src/` and
-re-apply the patches below.
+Copied from the Quill app (https://github.com/ETM-Code/quill) at commit `08fbfdc`. To re-sync, copy the same files from the app's
+`src/` and re-apply the patches below.
 
 Copied: `editor-setup.ts`, `icons.ts`, `images.ts`, `mermaid.ts`, `math-render.ts`,
 `katex-lazy.ts`, `styles.css`, `markdown/`, `extensions/`, and from `ui/`: bubble menu,
